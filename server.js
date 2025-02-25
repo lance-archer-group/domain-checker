@@ -5,9 +5,24 @@ const csv = require("fast-csv");
 const { Worker } = require("worker_threads");
 const os = require("os");
 const path = require("path");
+const dns = require("dns");
+const axios = require("axios");
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000; // ✅ Use Coolify-assigned port if available
+
+// ✅ Get the actual hostname (useful for logs)
+const getHostname = () => os.hostname();
+
+// ✅ Get public IP address (useful for external reporting)
+const getPublicIP = async () => {
+    try {
+        const response = await axios.get("https://api64.ipify.org?format=json");
+        return response.data.ip;
+    } catch (error) {
+        return "Unknown IP (No Internet Access)";
+    }
+};
 
 // ✅ Configure file upload (CSV only)
 const upload = multer({
@@ -130,7 +145,13 @@ app.get("/download/:filename", (req, res) => {
     }
 });
 
-// ✅ Start the server
-app.listen(PORT, () => {
-    console.log(`✅ Server running on http://localhost:${PORT}`);
+// ✅ Start the server and log correct hostname/IP
+app.listen(PORT, async () => {
+    const hostname = getHostname();
+    const publicIP = await getPublicIP();
+    
+    console.log(`✅ Server running at:`);
+    console.log(`   🌍 Hostname: ${hostname}`);
+    console.log(`   🌐 Public IP: ${publicIP}`);
+    console.log(`   📡 Listening on: http://0.0.0.0:${PORT}`);
 });
