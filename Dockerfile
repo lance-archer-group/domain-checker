@@ -12,7 +12,7 @@ RUN npm install --production
 COPY . .
 
 # ✅ Expose the port your app runs on
-EXPOSE 3996
+EXPOSE 3995
 
 # ✅ Start the server
 CMD ["node", "server.js"]
