@@ -1,9 +1,22 @@
 const axios = require("axios");
+const axiosRetry = require("axios-retry"); // ✅ Automatically retries failed requests
 const { parentPort, workerData } = require("worker_threads");
 
 // ✅ Define page size limits
 const MIN_PAGE_SIZE = 1500; // 1.5 KB (Filter out tiny pages)
 const MAX_PAGE_SIZE = 2 * 1024 * 1024; // 2 MB (Filter out massive pages)
+
+// ✅ Configure automatic retries for failed requests
+axiosRetry(axios, {
+    retries: 2, // ✅ Retry up to 2 times before failing
+    retryDelay: (retryCount) => {
+        console.log(`🔄 Retrying request... Attempt ${retryCount}`);
+        return Math.pow(2, retryCount) * 1000; // Exponential backoff (1s, 2s)
+    },
+    retryCondition: (error) => {
+        return error.code === "ETIMEDOUT" || error.code === "ECONNRESET" || error.response?.status >= 500;
+    }
+});
 
 // ✅ Keywords indicating a parked domain
 const PARKED_KEYWORDS = [
@@ -12,7 +25,7 @@ const PARKED_KEYWORDS = [
     "sedo", "afternic"
 ];
 
-// ✅ Function to check a website with page size filtering
+// ✅ Function to check a website with retry logic
 async function checkWebsite(domainData) {
     if (!domainData || !domainData.domain || !domainData.list_number) {
         console.error("❌ Invalid domainData received:", domainData);
@@ -30,13 +43,13 @@ async function checkWebsite(domainData) {
             domainData.domain = `http://${domain}`;
         }
 
-        // ✅ Send request (without full download)
+        // ✅ Send request with retry logic
         const response = await axios.get(domainData.domain, {
-            timeout: 5000, // 5s timeout
+            timeout: 10000, // ✅ Increase timeout to 10s
             headers: {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
             },
-            maxContentLength: MAX_PAGE_SIZE // Avoid downloading very large pages
+            maxContentLength: MAX_PAGE_SIZE // ✅ Avoid downloading very large pages
         });
 
         status = response.status;
@@ -80,7 +93,7 @@ async function checkWebsite(domainData) {
     return { domain, list_number, status, pageSize, parked: isParked };
 }
 
-// ✅ Process domains in worker and ensure it closes
+// ✅ Process all domains in parallel and ensure worker exits
 (async () => {
     console.log(`🔄 Worker ${process.pid} processing ${workerData.domains.length} domains...`);
 
