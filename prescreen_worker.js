@@ -2,7 +2,7 @@ const axios = require("axios");
 const { parentPort, workerData } = require("worker_threads");
 
 // ✅ Define page size limits
-const MIN_PAGE_SIZE = 1500; // 5 KB (Filter out tiny pages)
+const MIN_PAGE_SIZE = 1500; // 1.5 KB (Filter out tiny pages)
 const MAX_PAGE_SIZE = 2 * 1024 * 1024; // 2 MB (Filter out massive pages)
 
 // ✅ Keywords indicating a parked domain
@@ -64,12 +64,13 @@ async function checkWebsite(domainData) {
 
     } catch (error) {
         console.log(`❌ [Worker ${process.pid}] Error on ${domain}: ${error.message}`);
-        if (error.code === "ENOTFOUND") return { domain, list_number, status: "error", error: "Domain not found", parked: true };
-        if (error.code === "ECONNREFUSED") return { domain, list_number, status: "error", error: "Connection refused", parked: true };
-        if (error.code === "ETIMEDOUT") return { domain, list_number, status: "error", error: "Timeout exceeded", parked: true };
-        if (error.response && error.response.status === 403) return { domain, list_number, status: 403, error: "Blocked by website", parked: true };
-
-        return { domain, list_number, status: "error", error: error.message, parked: true };
+        return { 
+            domain, 
+            list_number, 
+            status: "error", 
+            error: error.code || error.message, 
+            parked: true 
+        };
     }
 
     // ✅ Check for parked domain indicators in the page content
@@ -79,14 +80,28 @@ async function checkWebsite(domainData) {
     return { domain, list_number, status, pageSize, parked: isParked };
 }
 
-// ✅ Process domains in worker
+// ✅ Process domains in worker and ensure it closes
 (async () => {
-    const results = [];
+    console.log(`🔄 Worker ${process.pid} processing ${workerData.domains.length} domains...`);
 
-    for (let domainData of workerData.domains) {
-        const result = await checkWebsite(domainData);
-        results.push(result);
+    try {
+        // ✅ Run all domain checks in parallel using `Promise.allSettled()` to avoid hanging
+        const results = await Promise.allSettled(workerData.domains.map(checkWebsite));
+
+        // ✅ Convert results into a simple array (resolve/reject handling)
+        const formattedResults = results.map(res => res.status === "fulfilled" ? res.value : {
+            domain: "unknown",
+            list_number: "unknown",
+            status: "error",
+            error: "Worker error",
+            parked: true
+        });
+
+        parentPort.postMessage(formattedResults);
+    } catch (err) {
+        console.error(`❌ [Worker ${process.pid}] Fatal Error: ${err.message}`);
+    } finally {
+        console.log(`🔴 [Worker ${process.pid}] Shutting down.`);
+        process.exit(0); // ✅ Force worker to exit
     }
-
-    parentPort.postMessage(results);
 })();
