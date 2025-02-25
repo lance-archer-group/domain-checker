@@ -9,7 +9,7 @@ const path = require("path");
 const app = express();
 const PORT = 3000;
 
-// File storage setup
+// ✅ Configure file upload (CSV only)
 const upload = multer({
     dest: "uploads/",
     limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
@@ -21,64 +21,82 @@ const upload = multer({
     },
 });
 
+// ✅ Set optimal number of workers
+const NUM_WORKERS = Math.min(8, os.cpus().length);
 
-// Number of worker threads (set to number of CPU cores)
-const NUM_WORKERS = os.cpus().length;
-
-// Function to split domains into chunks
+// ✅ Function to split data into chunks
 function splitIntoChunks(arr, numChunks) {
     const chunkSize = Math.ceil(arr.length / numChunks);
     return Array.from({ length: numChunks }, (_, i) => arr.slice(i * chunkSize, (i + 1) * chunkSize));
 }
 
-// Function to process CSV
+// ✅ Function to process CSV with workers
 async function processCSV(inputFile, outputDir) {
     const domains = [];
 
     return new Promise((resolve, reject) => {
         fs.createReadStream(inputFile)
             .pipe(csv.parse({ headers: true }))
-            .on("data", row => domains.push(row.domain))
+            .on("data", row => {
+                if (row.domain && row.list_number) {
+                    domains.push({ domain: row.domain.trim(), list_number: row.list_number.trim() });
+                }
+            })
             .on("end", async () => {
-                console.log(`Processing ${domains.length} domains using ${NUM_WORKERS} workers...`);
+                console.log(`🚀 Processing ${domains.length} domains with ${NUM_WORKERS} workers...`);
 
                 const chunks = splitIntoChunks(domains, NUM_WORKERS);
-                const workers = chunks.map(chunk => new Worker("./prescreen_worker.js", { workerData: { domains: chunk } }));
+                const workers = [];
+                let completedWorkers = 0;
+                let results = [];
 
-                const results = [];
-                workers.forEach(worker => {
-                    worker.on("message", data => results.push(...data));
-                    worker.on("error", err => console.error(`Worker error: ${err}`));
-                    worker.on("exit", code => {
-                        if (code !== 0) console.error(`Worker stopped with exit code ${code}`);
+                chunks.forEach((chunk, index) => {
+                    if (chunk.length === 0) return;
+
+                    console.log(`🟢 Worker ${index + 1} assigned ${chunk.length} domains`);
+                    const worker = new Worker("./prescreen_worker.js", { workerData: { domains: chunk } });
+
+                    worker.on("message", (data) => {
+                        results = results.concat(data);
                     });
+
+                    worker.on("exit", (code) => {
+                        completedWorkers++;
+                        console.log(`🔵 Worker ${index + 1} completed. Exit Code: ${code}`);
+
+                        if (completedWorkers === workers.length) {
+                            console.log("✅ All workers finished processing.");
+
+                            // ✅ Write results to CSV
+                            const goodResults = results.filter(result => !result.parked);
+                            const badResults = results.filter(result => result.parked);
+
+                            writeCSV(path.join(outputDir, "goodOut.csv"), goodResults);
+                            writeCSV(path.join(outputDir, "badOut.csv"), badResults);
+
+                            console.log(`📁 Results saved: ${goodResults.length} good, ${badResults.length} bad.`);
+                            resolve();
+                        }
+                    });
+
+                    worker.on("error", (err) => {
+                        console.error(`❌ Worker ${index + 1} error:`, err);
+                    });
+
+                    workers.push(worker);
                 });
-
-                // Wait for all workers to complete
-                await Promise.all(workers.map(worker => new Promise(res => worker.on("exit", res))));
-
-                // Split results into good and bad
-                const goodResults = results.filter(result => !result.parked);
-                const badResults = results.filter(result => result.parked);
-
-                // Write results to CSV
-                writeCSV(path.join(outputDir, "goodOut.csv"), goodResults);
-                writeCSV(path.join(outputDir, "badOut.csv"), badResults);
-
-                console.log(`Processing complete: ${goodResults.length} good, ${badResults.length} bad.`);
-                resolve();
             })
             .on("error", reject);
     });
 }
 
-// Function to write results to CSV
+// ✅ Function to write CSV results
 function writeCSV(filename, data) {
     const ws = fs.createWriteStream(filename);
     csv.write(data, { headers: true }).pipe(ws);
 }
 
-// API Endpoint: Upload CSV
+// ✅ API Endpoint: Upload CSV
 app.post("/upload", upload.single("file"), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
@@ -91,14 +109,18 @@ app.post("/upload", upload.single("file"), async (req, res) => {
 
     try {
         await processCSV(inputFile, outputDir);
-        res.json({ message: "Processing complete. Download results below.", goodCsv: "/download/goodOut.csv", badCsv: "/download/badOut.csv" });
+        res.json({
+            message: "Processing complete. Download results below.",
+            goodCsv: "/download/goodOut.csv",
+            badCsv: "/download/badOut.csv"
+        });
     } catch (error) {
-        console.error("Error processing CSV:", error);
+        console.error("❌ Error processing CSV:", error);
         res.status(500).json({ error: "Failed to process CSV" });
     }
 });
 
-// API Endpoint: Download results
+// ✅ API Endpoint: Download results
 app.get("/download/:filename", (req, res) => {
     const filePath = path.join(__dirname, "results", req.params.filename);
     if (fs.existsSync(filePath)) {
@@ -108,7 +130,7 @@ app.get("/download/:filename", (req, res) => {
     }
 });
 
-// Start the server
+// ✅ Start the server
 app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`✅ Server running on http://localhost:${PORT}`);
 });

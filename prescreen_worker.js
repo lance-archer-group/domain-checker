@@ -1,79 +1,92 @@
 const axios = require("axios");
-const puppeteer = require("puppeteer");
 const { parentPort, workerData } = require("worker_threads");
 
-// Keywords indicating a parked domain
+// ✅ Define page size limits
+const MIN_PAGE_SIZE = 5000; // 5 KB (Filter out tiny pages)
+const MAX_PAGE_SIZE = 2 * 1024 * 1024; // 2 MB (Filter out massive pages)
+
+// ✅ Keywords indicating a parked domain
 const PARKED_KEYWORDS = [
-    "domain for sale", "coming soon", "buy this domain", "this domain is parked",
-    "is for sale", "available for purchase", "sedo", "afternic", "parking page",
-    "advertising space", "parking service"
+    "domain for sale", "buy this domain", "this domain is parked",
+    "advertising space", "parking service", "available for purchase",
+    "sedo", "afternic"
 ];
 
-// Function to check a website
-async function checkWebsite(url, retry = false) {
-    let browser;
+// ✅ Function to check a website with page size filtering
+async function checkWebsite(domainData) {
+    if (!domainData || !domainData.domain || !domainData.list_number) {
+        console.error("❌ Invalid domainData received:", domainData);
+        return { domain: "unknown", list_number: "unknown", status: "error", error: "Invalid domain data", parked: true };
+    }
+
+    const domain = domainData.domain.trim();
+    const list_number = domainData.list_number.trim();
+    let status, pageSize, pageContent = "";
+
+    console.log(`🟡 [Worker ${process.pid}] Checking: ${domain} (List #${list_number})`);
+
     try {
-        if (!url.startsWith("http")) {
-            url = `http://${url}`;
+        if (!domain.startsWith("http")) {
+            domainData.domain = `http://${domain}`;
         }
 
-        // Fetch HTTP status
-        let status;
-        try {
-            const response = await axios.get(url, { timeout: 10000 });
-            status = response.status;
-
-            // Skip Puppeteer if status is 404
-            if (status === 404) {
-                return { url, status: 404, error: "Page Not Found", parked: true };
-            }
-        } catch (error) {
-            if (error.code === "ENOTFOUND") return { url, status: "error", error: "Domain not found", parked: true };
-            if (error.code === "ECONNREFUSED") return { url, status: "error", error: "Connection refused", parked: true };
-            if (error.code === "ETIMEDOUT") {
-                if (!retry) return await checkWebsite(url, true); // Retry once
-                return { url, status: "error", error: "Timeout exceeded", parked: true };
-            }
-            if (error.response && error.response.status === 403) return { url, status: 403, error: "Blocked by website", parked: true };
-            return { url, status: "error", error: error.message, parked: true };
-        }
-
-        // Launch Puppeteer (headless browser)
-        browser = await puppeteer.launch({
-            headless: "new",
-            args: ["--disable-features=BlockInsecurePrivateNetworkRequests"]
+        // ✅ Send request (without full download)
+        const response = await axios.get(domainData.domain, {
+            timeout: 5000, // 5s timeout
+            headers: {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
+            },
+            maxContentLength: MAX_PAGE_SIZE // Avoid downloading very large pages
         });
 
-        const page = await browser.newPage();
-        await page.setUserAgent(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
-        );
+        status = response.status;
+        pageSize = response.headers["content-length"] ? parseInt(response.headers["content-length"], 10) : response.data.length;
 
-        await page.goto(url, { waitUntil: "networkidle2", timeout: 20000 });
+        // ✅ Skip if the page is too small (likely parked/empty)
+        if (pageSize < MIN_PAGE_SIZE) {
+            console.log(`❌ [Worker ${process.pid}] ${domain} → Skipped (Too Small: ${pageSize} bytes)`);
+            return { domain, list_number, status, error: `Skipped (Too Small: ${pageSize} bytes)`, parked: true };
+        }
 
-        // Extract page title & meta description
-        const title = await page.title();
-        const metaDescription = await page.$eval("meta[name='description']", el => el.content).catch(() => "");
+        // ✅ Skip if the page is too large (not relevant)
+        if (pageSize > MAX_PAGE_SIZE) {
+            console.log(`❌ [Worker ${process.pid}] ${domain} → Skipped (Too Large: ${pageSize} bytes)`);
+            return { domain, list_number, status, error: `Skipped (Too Large: ${pageSize} bytes)`, parked: false };
+        }
 
-        // Check for parked domain indicators
-        const pageContent = `${title} ${metaDescription}`.toLowerCase();
-        const isParked = PARKED_KEYWORDS.some(keyword => pageContent.includes(keyword));
+        pageContent = response.data.toLowerCase(); // ✅ Store page HTML
 
-        return { url, status, title, metaDescription, parked: isParked };
+        // ✅ If 404, mark as parked
+        if (status === 404) {
+            console.log(`❌ [Worker ${process.pid}] ${domain} → 404 Not Found`);
+            return { domain, list_number, status: 404, error: "Page Not Found", parked: true };
+        }
 
     } catch (error) {
-        return { url, status: "error", error: error.message, parked: true };
-    } finally {
-        if (browser) await browser.close();
+        console.log(`❌ [Worker ${process.pid}] Error on ${domain}: ${error.message}`);
+        if (error.code === "ENOTFOUND") return { domain, list_number, status: "error", error: "Domain not found", parked: true };
+        if (error.code === "ECONNREFUSED") return { domain, list_number, status: "error", error: "Connection refused", parked: true };
+        if (error.code === "ETIMEDOUT") return { domain, list_number, status: "error", error: "Timeout exceeded", parked: true };
+        if (error.response && error.response.status === 403) return { domain, list_number, status: 403, error: "Blocked by website", parked: true };
+
+        return { domain, list_number, status: "error", error: error.message, parked: true };
     }
+
+    // ✅ Check for parked domain indicators in the page content
+    const isParked = PARKED_KEYWORDS.some(keyword => pageContent.includes(keyword));
+
+    console.log(`✅ [Worker ${process.pid}] Completed: ${domain} → Status: ${status}, Page Size: ${pageSize} bytes, Parked: ${isParked}`);
+    return { domain, list_number, status, pageSize, parked: isParked };
 }
 
-// Run checks for the assigned chunk of domains
+// ✅ Process domains in worker
 (async () => {
     const results = [];
-    for (let domain of workerData.domains) {
-        const result = await checkWebsite(domain);
+
+    for (let domainData of workerData.domains) {
+        const result = await checkWebsite(domainData);
         results.push(result);
     }
+
     parentPort.postMessage(results);
 })();
