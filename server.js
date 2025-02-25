@@ -141,7 +141,10 @@ app.post("/upload", upload.single("file"), async (req, res) => {
 // ✅ API Endpoint: Download results
 app.get("/download/:filename", (req, res) => {
     const filePath = path.join(__dirname, "results", req.params.filename);
+
     if (fs.existsSync(filePath)) {
+        res.setHeader("Content-Disposition", `attachment; filename="${req.params.filename}"`);
+        res.setHeader("Content-Type", "application/octet-stream");
         res.download(filePath);
     } else {
         res.status(404).json({ error: "File not found" });
