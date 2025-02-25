@@ -124,11 +124,14 @@ app.post("/upload", upload.single("file"), async (req, res) => {
 
     try {
         await processCSV(inputFile, outputDir);
+        const serverAddress = `http://${req.hostname}:${PORT}`;
+
         res.json({
             message: "Processing complete. Download results below.",
-            goodCsv: "/download/goodOut.csv",
-            badCsv: "/download/badOut.csv"
+            goodCsv: `${serverAddress}/download/goodOut.csv`,
+            badCsv: `${serverAddress}/download/badOut.csv`
         });
+        
     } catch (error) {
         console.error("❌ Error processing CSV:", error);
         res.status(500).json({ error: "Failed to process CSV" });
