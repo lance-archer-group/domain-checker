@@ -12,7 +12,7 @@ RUN npm install --omit=dev
 COPY . .
 
 # ✅ Expose the port your app runs on
-EXPOSE 3000
+EXPOSE 3996
 
 # ✅ Start the server
 CMD ["node", "server.js"]
