@@ -5,11 +5,10 @@ const csv = require("fast-csv");
 const { Worker } = require("worker_threads");
 const os = require("os");
 const path = require("path");
-const dns = require("dns");
 const axios = require("axios");
 
 const app = express();
-const PORT = process.env.PORT || 3000; // ✅ Use Coolify-assigned port if available
+const PORT = process.env.PORT || 3000;
 
 // ✅ Get the actual hostname (useful for logs)
 const getHostname = () => os.hostname();
@@ -124,14 +123,15 @@ app.post("/upload", upload.single("file"), async (req, res) => {
 
     try {
         await processCSV(inputFile, outputDir);
-        const serverAddress = `http://${req.hostname}:${PORT}`;
+        const publicIP = await getPublicIP(); // ✅ Get public IP for response links
+        const serverAddress = `http://${publicIP}:${PORT}`;
 
         res.json({
             message: "Processing complete. Download results below.",
             goodCsv: `${serverAddress}/download/goodOut.csv`,
             badCsv: `${serverAddress}/download/badOut.csv`
         });
-        
+
     } catch (error) {
         console.error("❌ Error processing CSV:", error);
         res.status(500).json({ error: "Failed to process CSV" });
@@ -160,4 +160,6 @@ app.listen(PORT, async () => {
     console.log(`   🌍 Hostname: ${hostname}`);
     console.log(`   🌐 Public IP: ${publicIP}`);
     console.log(`   📡 Listening on: http://0.0.0.0:${PORT}`);
+    console.log(`   📂 Download Results: http://${publicIP}:${PORT}/download/goodOut.csv`);
+    console.log(`   📂 Download Results: http://${publicIP}:${PORT}/download/badOut.csv`);
 });
