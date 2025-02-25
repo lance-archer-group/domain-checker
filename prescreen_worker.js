@@ -2,7 +2,7 @@ const axios = require("axios");
 const { parentPort, workerData } = require("worker_threads");
 
 // ✅ Define page size limits
-const MIN_PAGE_SIZE = 5000; // 5 KB (Filter out tiny pages)
+const MIN_PAGE_SIZE = 1500; // 5 KB (Filter out tiny pages)
 const MAX_PAGE_SIZE = 2 * 1024 * 1024; // 2 MB (Filter out massive pages)
 
 // ✅ Keywords indicating a parked domain
