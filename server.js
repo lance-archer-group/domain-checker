@@ -2,13 +2,15 @@ const express = require("express");
 const multer = require("multer");
 const fs = require("fs");
 const csv = require("fast-csv");
-const { Worker } = require("worker_threads");
+const workerpool = require("workerpool");
 const os = require("os");
 const path = require("path");
-const axios = require("axios");
+const { fetch } = require("undici");
+const dns = require("dns").promises;
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const pool = workerpool.pool("./prescreen_worker.js", { maxWorkers: os.cpus().length });
 
 // ✅ Get the actual hostname (useful for logs)
 const getHostname = () => os.hostname();
@@ -16,11 +18,23 @@ const getHostname = () => os.hostname();
 // ✅ Get public IP address (useful for external reporting)
 const getPublicIP = async () => {
     try {
-        const response = await axios.get("https://api64.ipify.org?format=json");
-        return response.data.ip;
+        const response = await fetch("https://api64.ipify.org?format=json");
+        const data = await response.json();
+        return data.ip;
     } catch (error) {
         return "Unknown IP (No Internet Access)";
     }
+};
+
+// ✅ Log system resources
+const logSystemResources = () => {
+    const totalMemory = os.totalmem() / (1024 * 1024); // Convert to MB
+    const freeMemory = os.freemem() / (1024 * 1024); // Convert to MB
+    const cpuCores = os.cpus().length;
+    console.log("🖥️ System Resources:");
+    console.log(`   🧠 Total Memory: ${totalMemory.toFixed(2)} MB`);
+    console.log(`   🏋️ Free Memory: ${freeMemory.toFixed(2)} MB`);
+    console.log(`   🔢 CPU Cores: ${cpuCores}`);
 };
 
 // ✅ Configure file upload (CSV only)
@@ -34,81 +48,6 @@ const upload = multer({
         cb(null, true);
     },
 });
-
-// ✅ Set optimal number of workers
-const NUM_WORKERS = Math.min(8, os.cpus().length);
-
-// ✅ Function to split data into chunks
-function splitIntoChunks(arr, numChunks) {
-    const chunkSize = Math.ceil(arr.length / numChunks);
-    return Array.from({ length: numChunks }, (_, i) => arr.slice(i * chunkSize, (i + 1) * chunkSize));
-}
-
-// ✅ Function to process CSV with workers
-async function processCSV(inputFile, outputDir) {
-    const domains = [];
-
-    return new Promise((resolve, reject) => {
-        fs.createReadStream(inputFile)
-            .pipe(csv.parse({ headers: true }))
-            .on("data", row => {
-                if (row.domain && row.list_number) {
-                    domains.push({ domain: row.domain.trim(), list_number: row.list_number.trim() });
-                }
-            })
-            .on("end", async () => {
-                console.log(`🚀 Processing ${domains.length} domains with ${NUM_WORKERS} workers...`);
-
-                const chunks = splitIntoChunks(domains, NUM_WORKERS);
-                const workers = [];
-                let completedWorkers = 0;
-                let results = [];
-
-                chunks.forEach((chunk, index) => {
-                    if (chunk.length === 0) return;
-
-                    console.log(`🟢 Worker ${index + 1} assigned ${chunk.length} domains`);
-                    const worker = new Worker("./prescreen_worker.js", { workerData: { domains: chunk } });
-
-                    worker.on("message", (data) => {
-                        results = results.concat(data);
-                    });
-
-                    worker.on("exit", (code) => {
-                        completedWorkers++;
-                        console.log(`🔵 Worker ${index + 1} completed. Exit Code: ${code}`);
-
-                        if (completedWorkers === workers.length) {
-                            console.log("✅ All workers finished processing.");
-
-                            // ✅ Write results to CSV
-                            const goodResults = results.filter(result => !result.parked);
-                            const badResults = results.filter(result => result.parked);
-
-                            writeCSV(path.join(outputDir, "goodOut.csv"), goodResults);
-                            writeCSV(path.join(outputDir, "badOut.csv"), badResults);
-
-                            console.log(`📁 Results saved: ${goodResults.length} good, ${badResults.length} bad.`);
-                            resolve();
-                        }
-                    });
-
-                    worker.on("error", (err) => {
-                        console.error(`❌ Worker ${index + 1} error:`, err);
-                    });
-
-                    workers.push(worker);
-                });
-            })
-            .on("error", reject);
-    });
-}
-
-// ✅ Function to write CSV results
-function writeCSV(filename, data) {
-    const ws = fs.createWriteStream(filename);
-    csv.write(data, { headers: true }).pipe(ws);
-}
 
 // ✅ API Endpoint: Upload CSV
 app.post("/upload", upload.single("file"), async (req, res) => {
@@ -131,7 +70,6 @@ app.post("/upload", upload.single("file"), async (req, res) => {
             goodCsv: `${serverAddress}/download/goodOut.csv`,
             badCsv: `${serverAddress}/download/badOut.csv`
         });
-
     } catch (error) {
         console.error("❌ Error processing CSV:", error);
         res.status(500).json({ error: "Failed to process CSV" });
@@ -143,13 +81,47 @@ app.get("/download/:filename", (req, res) => {
     const filePath = path.join(__dirname, "results", req.params.filename);
 
     if (fs.existsSync(filePath)) {
-        res.setHeader("Content-Disposition", `attachment; filename="${req.params.filename}"`);
+        res.setHeader("Content-Disposition", `attachment; filename=\"${req.params.filename}\"`);
         res.setHeader("Content-Type", "application/octet-stream");
         res.download(filePath);
     } else {
         res.status(404).json({ error: "File not found" });
     }
 });
+
+// ✅ Function to process CSV with worker pool
+async function processCSV(inputFile, outputDir) {
+    const domains = [];
+
+    return new Promise((resolve, reject) => {
+        fs.createReadStream(inputFile)
+            .pipe(csv.parse({ headers: true }))
+            .on("data", row => {
+                if (row.domain && row.list_number) {
+                    domains.push({ domain: row.domain.trim(), list_number: row.list_number.trim() });
+                }
+            })
+            .on("end", async () => {
+                console.log(`🚀 Processing ${domains.length} domains with worker pool...`);
+                logSystemResources();
+
+                // ✅ Process all domains concurrently using worker pool
+                const tasks = domains.map(domain => pool.exec("checkWebsite", [domain],{ timeout: 10000 }));
+                const results = await Promise.allSettled(tasks);
+
+                // ✅ Process results
+                const goodResults = results.filter(res => res.status === "fulfilled" && !res.value.parked).map(res => res.value);
+                const badResults = results.filter(res => res.status === "fulfilled" && res.value.parked).map(res => res.value);
+
+                writeCSV(path.join(outputDir, "goodOut.csv"), goodResults);
+                writeCSV(path.join(outputDir, "badOut.csv"), badResults);
+
+                console.log(`📁 Results saved: ${goodResults.length} good, ${badResults.length} bad.`);
+                resolve();
+            })
+            .on("error", reject);
+    });
+}
 
 // ✅ Start the server and log correct hostname/IP
 app.listen(PORT, async () => {
@@ -162,4 +134,6 @@ app.listen(PORT, async () => {
     console.log(`   📡 Listening on: http://0.0.0.0:${PORT}`);
     console.log(`   📂 Download Results: http://${publicIP}:${PORT}/download/goodOut.csv`);
     console.log(`   📂 Download Results: http://${publicIP}:${PORT}/download/badOut.csv`);
+
+    logSystemResources();
 });
