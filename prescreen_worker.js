@@ -1,5 +1,5 @@
 const axios = require("axios");
-const axiosRetry = require("axios-retry"); // ✅ Automatically retries failed requests
+const axiosRetry = require("axios-retry").default; // ✅ Automatically retries failed requests
 const { parentPort, workerData } = require("worker_threads");
 
 // ✅ Define page size limits
