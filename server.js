@@ -7,6 +7,7 @@ const os = require("os");
 const path = require("path");
 const { fetch } = require("undici");
 const dns = require("dns").promises;
+const schedule = require("node-schedule");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -28,8 +29,8 @@ const getPublicIP = async () => {
 
 // ✅ Log system resources
 const logSystemResources = () => {
-    const totalMemory = os.totalmem() / (1024 * 1024); // Convert to MB
-    const freeMemory = os.freemem() / (1024 * 1024); // Convert to MB
+    const totalMemory = os.totalmem() / (1024 * 1024);
+    const freeMemory = os.freemem() / (1024 * 1024);
     const cpuCores = os.cpus().length;
     console.log("🖥️ System Resources:");
     console.log(`   🧠 Total Memory: ${totalMemory.toFixed(2)} MB`);
@@ -43,10 +44,33 @@ function writeCSV(filename, data) {
     csv.write(data, { headers: true }).pipe(ws);
 }
 
+// ✅ Schedule deletion of old files (every day at midnight)
+schedule.scheduleJob("0 0 * * *", () => {
+    const resultsDir = "results";
+    const oneWeekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+
+    fs.readdir(resultsDir, (err, files) => {
+        if (err) return console.error("❌ Error reading results directory:", err);
+
+        files.forEach(file => {
+            const filePath = path.join(resultsDir, file);
+            fs.stat(filePath, (err, stats) => {
+                if (err) return console.error("❌ Error getting file stats:", err);
+                if (stats.mtimeMs < oneWeekAgo) {
+                    fs.unlink(filePath, err => {
+                        if (err) console.error("❌ Error deleting file:", err);
+                        else console.log(`🗑️ Deleted old file: ${file}`);
+                    });
+                }
+            });
+        });
+    });
+});
+
 // ✅ Configure file upload (CSV only)
 const upload = multer({
     dest: "uploads/",
-    limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+    limits: { fileSize: 5 * 1024 * 1024 },
     fileFilter: (req, file, cb) => {
         if (file.mimetype !== "text/csv") {
             return cb(new Error("Only CSV files are allowed"), false);
@@ -61,20 +85,23 @@ app.post("/upload", upload.single("file"), async (req, res) => {
 
     const inputFile = req.file.path;
     const outputDir = "results";
+    const baseFilename = path.basename(req.file.originalname, path.extname(req.file.originalname));
+    const goodFile = path.join(outputDir, `${baseFilename}_good.csv`);
+    const badFile = path.join(outputDir, `${baseFilename}_bad.csv`);
 
     if (!fs.existsSync(outputDir)) {
         fs.mkdirSync(outputDir);
     }
 
     try {
-        await processCSV(inputFile, outputDir);
-        const publicIP = await getPublicIP(); // ✅ Get public IP for response links
+        await processCSV(inputFile, goodFile, badFile);
+        const publicIP = await getPublicIP();
         const serverAddress = `http://${publicIP}:${PORT}`;
 
         res.json({
             message: "Processing complete. Download results below.",
-            goodCsv: `${serverAddress}/download/goodOut.csv`,
-            badCsv: `${serverAddress}/download/badOut.csv`
+            goodCsv: `${serverAddress}/download/${path.basename(goodFile)}`,
+            badCsv: `${serverAddress}/download/${path.basename(badFile)}`
         });
     } catch (error) {
         console.error("❌ Error processing CSV:", error);
@@ -96,7 +123,7 @@ app.get("/download/:filename", (req, res) => {
 });
 
 // ✅ Function to process CSV with worker pool
-async function processCSV(inputFile, outputDir) {
+async function processCSV(inputFile, goodFile, badFile) {
     const domains = [];
 
     return new Promise((resolve, reject) => {
@@ -111,18 +138,16 @@ async function processCSV(inputFile, outputDir) {
                 console.log(`🚀 Processing ${domains.length} domains with worker pool...`);
                 logSystemResources();
 
-                // ✅ Process all domains concurrently using worker pool with timeout
                 const tasks = domains.map(domain => 
                     pool.exec("checkWebsite", [domain]).timeout(10000).catch(() => ({ domain: domain.domain, list_number: domain.list_number, status: "error", error: "Timeout exceeded", parked: true }))
                 );
                 const results = await Promise.allSettled(tasks);
 
-                // ✅ Process results
                 const goodResults = results.filter(res => res.status === "fulfilled" && !res.value.parked).map(res => res.value);
                 const badResults = results.filter(res => res.status === "fulfilled" && res.value.parked).map(res => res.value);
 
-                writeCSV(path.join(outputDir, "goodOut.csv"), goodResults);
-                writeCSV(path.join(outputDir, "badOut.csv"), badResults);
+                writeCSV(goodFile, goodResults);
+                writeCSV(badFile, badResults);
 
                 console.log(`📁 Results saved: ${goodResults.length} good, ${badResults.length} bad.`);
                 resolve();
@@ -139,9 +164,6 @@ app.listen(PORT, async () => {
     console.log(`✅ Server running at:`);
     console.log(`   🌍 Hostname: ${hostname}`);
     console.log(`   🌐 Public IP: ${publicIP}`);
-    console.log(`   📡 Listening on: http://0.0.0.0:${PORT}`);
-    console.log(`   📂 Download Results: http://${publicIP}:${PORT}/download/goodOut.csv`);
-    console.log(`   📂 Download Results: http://${publicIP}:${PORT}/download/badOut.csv`);
-
+    console.log(`   📡 Listening on: ${publicIP}:${PORT}`);
     logSystemResources();
 });
