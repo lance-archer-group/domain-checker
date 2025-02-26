@@ -138,18 +138,45 @@ async function processCSV(inputFile, goodFile, badFile) {
                 const tasks = domains.map(domain =>
                     pool.exec("checkWebsite", [domain])
                         .timeout(10000)
-                        .catch(() => ({ domain: domain.domain, list_number: domain.list_number, status: "error", error: "Timeout exceeded", parked: true }))
+                        .catch(() => ({
+                            domain: domain.domain,
+                            list_number: domain.list_number,
+                            status: "error",
+                            error_reason: "Timeout exceeded",
+                            parked: true,
+                            pageSize: 0,
+                            final_url: "N/A"
+                        }))
                 );
 
                 const results = await Promise.allSettled(tasks);
 
-                const goodResults = results
-                    .filter(res => res.status === "fulfilled" && !res.value.parked)
-                    .map(res => res.value);
+                const goodResults = [];
+                const badResults = [];
 
-                const badResults = results
-                    .filter(res => res.status === "fulfilled" && res.value.parked)
-                    .map(res => res.value);
+                results.forEach(result => {
+                    if (result.status === "fulfilled") {
+                        const data = result.value;
+
+                        // ✅ DNS & network errors should be classified as "bad"
+                        if (data.status === "error" || data.parked) {
+                            badResults.push(data);
+                        } else {
+                            goodResults.push(data);
+                        }
+                    } else {
+                        // ✅ Handle any errors that caused rejection
+                        badResults.push({
+                            domain: "unknown",
+                            list_number: "unknown",
+                            status: "error",
+                            error_reason: "Worker thread failed",
+                            parked: true,
+                            pageSize: 0,
+                            final_url: "N/A"
+                        });
+                    }
+                });
 
                 writeCSV(goodFile, goodResults);
                 writeCSV(badFile, badResults);
@@ -164,7 +191,7 @@ async function processCSV(inputFile, goodFile, badFile) {
 // ✅ Function to write CSV results
 function writeCSV(filename, data) {
     const ws = fs.createWriteStream(filename);
-    csv.write(data, { headers: true }).pipe(ws);
+    csv.write(data, { headers: ["domain", "list_number", "status", "pageSize (KB)", "parked", "error_reason", "final_url"] }).pipe(ws);
 }
 
 // ✅ Schedule deletion of old files (every day at midnight)
