@@ -2,17 +2,14 @@ const workerpool = require("workerpool");
 const { fetch } = require("undici");
 const dns = require("dns").promises;
 
-// ✅ Keywords indicating a parked domain
 const PARKED_KEYWORDS = [
     "domain for sale", "buy this domain", "this domain is parked",
     "advertising space", "parking service", "available for purchase",
     "sedo", "afternic"
 ];
 
-// ✅ Minimum page size (in bytes)
-const MIN_PAGE_SIZE = 500 * 1024; // 1500 KB
+const MIN_PAGE_SIZE = 500 * 1024; // 500 KB
 
-// ✅ Function to check DNS before making requests
 async function checkDNS(domain) {
     try {
         await dns.resolve(domain);
@@ -22,23 +19,19 @@ async function checkDNS(domain) {
     }
 }
 
-// ✅ Function to check website
 async function checkWebsite(domainData) {
     if (!domainData || !domainData.domain || !domainData.list_number) {
-        console.error("❌ Invalid domainData received:", domainData);
-        return { domain: "unknown", list_number: "unknown", status: "error", error: "Invalid domain data", parked: true, pageSize: 0 };
+        return { domain: "unknown", list_number: "unknown", status: "error", error_reason: "Invalid domain data", parked: true, pageSize: 0 };
     }
 
     const domain = domainData.domain.trim();
     const list_number = domainData.list_number.trim();
-    let status, pageContent = "", pageSize = 0;
+    let status = "unknown", pageSize = 0, errorReason = "";
 
     console.log(`🟡 [Worker ${process.pid}] Checking: ${domain} (List #${list_number})`);
 
-    // ✅ Check if domain has a valid DNS record before requesting
     if (!(await checkDNS(domain))) {
-        console.log(`❌ [Worker ${process.pid}] ${domain} does not resolve.`);
-        return { domain, list_number, status: "error", error: "DNS resolution failed", parked: true, pageSize: 0 };
+        return { domain, list_number, status: "error", error_reason: "DNS resolution failed", parked: true, pageSize: 0 };
     }
 
     try {
@@ -51,27 +44,34 @@ async function checkWebsite(domainData) {
 
         status = response.status;
 
-        // ✅ Get page size from content-length header (if available)
+        // ✅ First, try to use Content-Length header
         const contentLength = response.headers.get("content-length");
         if (contentLength) {
             pageSize = parseInt(contentLength, 10);
         } else {
-            // ✅ Fallback: Measure content size manually
-            pageContent = await response.text();
-            pageSize = Buffer.byteLength(pageContent, "utf-8");
+            // ✅ Fallback: Measure raw response body size (more accurate)
+            const bodyBuffer = await response.arrayBuffer();
+            pageSize = bodyBuffer.byteLength;
         }
 
-        // ✅ If page is too small, mark as parked
-        const isParked = pageSize < MIN_PAGE_SIZE || PARKED_KEYWORDS.some(keyword => pageContent.includes(keyword));
+        // ✅ Check for parked keywords (convert buffer to string safely)
+        const pageContent = Buffer.from(await response.arrayBuffer()).toString("utf-8").toLowerCase();
+        if (PARKED_KEYWORDS.some(keyword => pageContent.includes(keyword))) {
+            errorReason = "Detected as parked";
+        }
 
-        console.log(`✅ [Worker ${process.pid}] Completed: ${domain} → Status: ${status}, Page Size: ${(pageSize / 1024).toFixed(2)} KB, Parked: ${isParked}`);
+        if (pageSize < MIN_PAGE_SIZE) {
+            errorReason = "Page size too small";
+        }
 
-        return { domain, list_number, status, parked: isParked, pageSize: (pageSize / 1024).toFixed(2) };
+        const isParked = errorReason !== "";
+
+        console.log(`✅ [Worker ${process.pid}] Completed: ${domain} → Status: ${status}, Page Size: ${(pageSize / 1024).toFixed(2)} KB, Parked: ${isParked}, Error: ${errorReason || "None"}`);
+
+        return { domain, list_number, status, parked: isParked, pageSize: (pageSize / 1024).toFixed(2), error_reason: errorReason || "None" };
     } catch (error) {
-        console.log(`❌ [Worker ${process.pid}] Error on ${domain}: ${error.message}`);
-        return { domain, list_number, status: "error", error: error.message, parked: true, pageSize: 0 };
+        return { domain, list_number, status: "error", error_reason: error.message, parked: true, pageSize: 0 };
     }
 }
 
-// ✅ Expose function to worker pool
 workerpool.worker({ checkWebsite });
