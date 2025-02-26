@@ -9,6 +9,7 @@ const PARKED_KEYWORDS = [
 ];
 
 const MIN_PAGE_SIZE = 500 * 1024; // 500 KB
+const MAX_PAGE_SIZE = 5 * 1024 * 1024; // 5 MB
 
 async function checkDNS(domain) {
     try {
@@ -46,29 +47,38 @@ async function checkWebsite(domainData) {
 
         // ✅ First, try to use Content-Length header
         const contentLength = response.headers.get("content-length");
+        let pageContent = "";
+
         if (contentLength) {
             pageSize = parseInt(contentLength, 10);
         } else {
-            // ✅ Fallback: Measure raw response body size (more accurate)
-            const bodyBuffer = await response.arrayBuffer();
-            pageSize = bodyBuffer.byteLength;
+            // ✅ Fallback: Measure raw response body size using text encoding
+            pageContent = await response.text();
+            pageSize = Buffer.byteLength(pageContent, "utf-8");
         }
 
-        // ✅ Check for parked keywords (convert buffer to string safely)
-        const pageContent = Buffer.from(await response.arrayBuffer()).toString("utf-8").toLowerCase();
-        if (PARKED_KEYWORDS.some(keyword => pageContent.includes(keyword))) {
-            errorReason = "Detected as parked";
-        }
-
+        // ✅ Skip if the page is too small (likely parked/empty)
         if (pageSize < MIN_PAGE_SIZE) {
-            errorReason = "Page size too small";
+            console.log(`❌ [Worker ${process.pid}] ${domain} → Skipped (Too Small: ${pageSize} bytes)`);
+            return { domain, list_number, status, error: `Skipped (Too Small: ${pageSize} bytes)`, parked: true, pageSize };
         }
 
-        const isParked = errorReason !== "";
+        // ✅ Skip if the page is too large (not relevant)
+        if (pageSize > MAX_PAGE_SIZE) {
+            console.log(`❌ [Worker ${process.pid}] ${domain} → Skipped (Too Large: ${pageSize} bytes)`);
+            return { domain, list_number, status, error: `Skipped (Too Large: ${pageSize} bytes)`, parked: false, pageSize };
+        }
 
-        console.log(`✅ [Worker ${process.pid}] Completed: ${domain} → Status: ${status}, Page Size: ${(pageSize / 1024).toFixed(2)} KB, Parked: ${isParked}, Error: ${errorReason || "None"}`);
+        // ✅ Check for parked domain indicators in the page content
+        if (!pageContent) {
+            pageContent = await response.text();
+        }
 
-        return { domain, list_number, status, parked: isParked, pageSize: (pageSize / 1024).toFixed(2), error_reason: errorReason || "None" };
+        const isParked = PARKED_KEYWORDS.some(keyword => pageContent.includes(keyword));
+
+        console.log(`✅ [Worker ${process.pid}] Completed: ${domain} → Status: ${status}, Page Size: ${pageSize} bytes, Parked: ${isParked}`);
+
+        return { domain, list_number, status, pageSize, parked: isParked };
     } catch (error) {
         return { domain, list_number, status: "error", error_reason: error.message, parked: true, pageSize: 0 };
     }
