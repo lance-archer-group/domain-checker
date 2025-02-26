@@ -9,6 +9,9 @@ const PARKED_KEYWORDS = [
     "sedo", "afternic"
 ];
 
+// ✅ Minimum page size (in bytes)
+const MIN_PAGE_SIZE = 1500 * 1024; // 1500 KB
+
 // ✅ Function to check DNS before making requests
 async function checkDNS(domain) {
     try {
@@ -28,7 +31,7 @@ async function checkWebsite(domainData) {
 
     const domain = domainData.domain.trim();
     const list_number = domainData.list_number.trim();
-    let status, pageContent = "";
+    let status, pageContent = "", pageSize = 0;
 
     console.log(`🟡 [Worker ${process.pid}] Checking: ${domain} (List #${list_number})`);
 
@@ -47,17 +50,32 @@ async function checkWebsite(domainData) {
         });
 
         status = response.status;
-        pageContent = (await response.text()).toLowerCase();
+
+        // ✅ Get page size from content-length header (if available)
+        const contentLength = response.headers.get("content-length");
+        if (contentLength) {
+            pageSize = parseInt(contentLength, 10);
+        } else {
+            // ✅ Fallback: Measure content size manually
+            pageContent = await response.text();
+            pageSize = Buffer.byteLength(pageContent, "utf-8");
+        }
+
+        // ✅ If page is too small, mark as parked
+        if (pageSize < MIN_PAGE_SIZE) {
+            console.log(`❌ [Worker ${process.pid}] ${domain} page size too small (${(pageSize / 1024).toFixed(2)} KB)`);
+            return { domain, list_number, status, error: "Page size too small", parked: true };
+        }
+
+        // ✅ Check for parked domain indicators
+        const isParked = PARKED_KEYWORDS.some(keyword => pageContent.includes(keyword));
+
+        console.log(`✅ [Worker ${process.pid}] Completed: ${domain} → Status: ${status}, Page Size: ${(pageSize / 1024).toFixed(2)} KB, Parked: ${isParked}`);
+        return { domain, list_number, status, parked: isParked };
     } catch (error) {
         console.log(`❌ [Worker ${process.pid}] Error on ${domain}: ${error.message}`);
         return { domain, list_number, status: "error", error: error.message, parked: true };
     }
-
-    // ✅ Check for parked domain indicators
-    const isParked = PARKED_KEYWORDS.some(keyword => pageContent.includes(keyword));
-
-    console.log(`✅ [Worker ${process.pid}] Completed: ${domain} → Status: ${status}, Parked: ${isParked}`);
-    return { domain, list_number, status, parked: isParked };
 }
 
 // ✅ Expose function to worker pool
