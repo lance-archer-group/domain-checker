@@ -37,6 +37,12 @@ const logSystemResources = () => {
     console.log(`   🔢 CPU Cores: ${cpuCores}`);
 };
 
+// ✅ Function to write CSV results
+function writeCSV(filename, data) {
+    const ws = fs.createWriteStream(filename);
+    csv.write(data, { headers: true }).pipe(ws);
+}
+
 // ✅ Configure file upload (CSV only)
 const upload = multer({
     dest: "uploads/",
@@ -105,8 +111,10 @@ async function processCSV(inputFile, outputDir) {
                 console.log(`🚀 Processing ${domains.length} domains with worker pool...`);
                 logSystemResources();
 
-                // ✅ Process all domains concurrently using worker pool
-                const tasks = domains.map(domain => pool.exec("checkWebsite", [domain],{ timeout: 10000 }));
+                // ✅ Process all domains concurrently using worker pool with timeout
+                const tasks = domains.map(domain => 
+                    pool.exec("checkWebsite", [domain]).timeout(10000).catch(() => ({ domain: domain.domain, list_number: domain.list_number, status: "error", error: "Timeout exceeded", parked: true }))
+                );
                 const results = await Promise.allSettled(tasks);
 
                 // ✅ Process results
