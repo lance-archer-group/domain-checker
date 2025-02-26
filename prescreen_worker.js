@@ -10,7 +10,7 @@ const PARKED_KEYWORDS = [
 ];
 
 // ✅ Minimum page size (in bytes)
-const MIN_PAGE_SIZE = 1500 * 1024; // 1500 KB
+const MIN_PAGE_SIZE = 500 * 1024; // 1500 KB
 
 // ✅ Function to check DNS before making requests
 async function checkDNS(domain) {
