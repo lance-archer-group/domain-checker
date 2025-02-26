@@ -8,10 +8,13 @@ const path = require("path");
 const { fetch } = require("undici");
 const dns = require("dns").promises;
 const schedule = require("node-schedule");
+const axios = require("axios");
+const FormData = require("form-data");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const pool = workerpool.pool("./prescreen_worker.js", { maxWorkers: os.cpus().length });
+const BUBBLE_API_URL = "https://d132.bubble.is/site/dataorchard/version-test/api/1.1/wf/webhookfile";
 
 // ✅ Get the actual hostname (useful for logs)
 const getHostname = () => os.hostname();
@@ -27,45 +30,36 @@ const getPublicIP = async () => {
     }
 };
 
-// ✅ Log system resources
-const logSystemResources = () => {
-    const totalMemory = os.totalmem() / (1024 * 1024);
-    const freeMemory = os.freemem() / (1024 * 1024);
-    const cpuCores = os.cpus().length;
-    console.log("🖥️ System Resources:");
-    console.log(`   🧠 Total Memory: ${totalMemory.toFixed(2)} MB`);
-    console.log(`   🏋️ Free Memory: ${freeMemory.toFixed(2)} MB`);
-    console.log(`   🔢 CPU Cores: ${cpuCores}`);
-};
+// ✅ Function to send files to Bubble API (Using FormData)
+async function sendToBubble(fileType, filePath) {
+    try {
+        const publicIP = await getPublicIP();
+        const fileUrl = `http://${publicIP}:${PORT}/download/${path.basename(filePath)}`;
+        
+        console.log(`📡 Sending ${fileType} file URL to Bubble API...`);
+        console.log("🔹 URL:", fileUrl);
 
-// ✅ Function to write CSV results
-function writeCSV(filename, data) {
-    const ws = fs.createWriteStream(filename);
-    csv.write(data, { headers: true }).pipe(ws);
+        const payload = { file: fileUrl };
+
+        const response = await axios.post(BUBBLE_API_URL, payload, {
+            headers: {
+                "Content-Type": "application/json"
+            }
+        });
+
+        console.log(`✅ Successfully sent ${fileType} file URL to Bubble API: ${response.status}`);
+        console.log("🔹 Response Data:", response.data);
+    } catch (error) {
+        console.error(`❌ Error sending ${fileType} file URL to Bubble API:`);
+        if (error.response) {
+            console.error("🔸 Status:", error.response.status);
+            console.error("🔸 Response Data:", error.response.data);
+        } else {
+            console.error("🔸 Error Message:", error.message);
+        }
+    }
 }
 
-// ✅ Schedule deletion of old files (every day at midnight)
-schedule.scheduleJob("0 0 * * *", () => {
-    const resultsDir = "results";
-    const oneWeekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-
-    fs.readdir(resultsDir, (err, files) => {
-        if (err) return console.error("❌ Error reading results directory:", err);
-
-        files.forEach(file => {
-            const filePath = path.join(resultsDir, file);
-            fs.stat(filePath, (err, stats) => {
-                if (err) return console.error("❌ Error getting file stats:", err);
-                if (stats.mtimeMs < oneWeekAgo) {
-                    fs.unlink(filePath, err => {
-                        if (err) console.error("❌ Error deleting file:", err);
-                        else console.log(`🗑️ Deleted old file: ${file}`);
-                    });
-                }
-            });
-        });
-    });
-});
 
 // ✅ Configure file upload (CSV only)
 const upload = multer({
@@ -98,6 +92,10 @@ app.post("/upload", upload.single("file"), async (req, res) => {
         const publicIP = await getPublicIP();
         const serverAddress = `http://${publicIP}:${PORT}`;
 
+        // ✅ Send files to Bubble API
+        await sendToBubble("good", goodFile);
+        await sendToBubble("bad", badFile);
+
         res.json({
             message: "Processing complete. Download results below.",
             goodCsv: `${serverAddress}/download/${path.basename(goodFile)}`,
@@ -114,7 +112,7 @@ app.get("/download/:filename", (req, res) => {
     const filePath = path.join(__dirname, "results", req.params.filename);
 
     if (fs.existsSync(filePath)) {
-        res.setHeader("Content-Disposition", `attachment; filename=\"${req.params.filename}\"`);
+        res.setHeader("Content-Disposition", `attachment; filename="${req.params.filename}"`);
         res.setHeader("Content-Type", "application/octet-stream");
         res.download(filePath);
     } else {
@@ -136,15 +134,22 @@ async function processCSV(inputFile, goodFile, badFile) {
             })
             .on("end", async () => {
                 console.log(`🚀 Processing ${domains.length} domains with worker pool...`);
-                logSystemResources();
 
-                const tasks = domains.map(domain => 
-                    pool.exec("checkWebsite", [domain]).timeout(10000).catch(() => ({ domain: domain.domain, list_number: domain.list_number, status: "error", error: "Timeout exceeded", parked: true }))
+                const tasks = domains.map(domain =>
+                    pool.exec("checkWebsite", [domain])
+                        .timeout(10000)
+                        .catch(() => ({ domain: domain.domain, list_number: domain.list_number, status: "error", error: "Timeout exceeded", parked: true }))
                 );
+
                 const results = await Promise.allSettled(tasks);
 
-                const goodResults = results.filter(res => res.status === "fulfilled" && !res.value.parked).map(res => res.value);
-                const badResults = results.filter(res => res.status === "fulfilled" && res.value.parked).map(res => res.value);
+                const goodResults = results
+                    .filter(res => res.status === "fulfilled" && !res.value.parked)
+                    .map(res => res.value);
+
+                const badResults = results
+                    .filter(res => res.status === "fulfilled" && res.value.parked)
+                    .map(res => res.value);
 
                 writeCSV(goodFile, goodResults);
                 writeCSV(badFile, badResults);
@@ -156,14 +161,42 @@ async function processCSV(inputFile, goodFile, badFile) {
     });
 }
 
+// ✅ Function to write CSV results
+function writeCSV(filename, data) {
+    const ws = fs.createWriteStream(filename);
+    csv.write(data, { headers: true }).pipe(ws);
+}
+
+// ✅ Schedule deletion of old files (every day at midnight)
+schedule.scheduleJob("0 0 * * *", () => {
+    const resultsDir = "results";
+    const oneWeekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+
+    fs.readdir(resultsDir, (err, files) => {
+        if (err) return console.error("❌ Error reading results directory:", err);
+
+        files.forEach(file => {
+            const filePath = path.join(resultsDir, file);
+            fs.stat(filePath, (err, stats) => {
+                if (err) return console.error("❌ Error getting file stats:", err);
+                if (stats.mtimeMs < oneWeekAgo) {
+                    fs.unlink(filePath, err => {
+                        if (err) console.error("❌ Error deleting file:", err);
+                        else console.log(`🗑️ Deleted old file: ${file}`);
+                    });
+                }
+            });
+        });
+    });
+});
+
 // ✅ Start the server and log correct hostname/IP
 app.listen(PORT, async () => {
     const hostname = getHostname();
     const publicIP = await getPublicIP();
-    
+
     console.log(`✅ Server running at:`);
     console.log(`   🌍 Hostname: ${hostname}`);
     console.log(`   🌐 Public IP: ${publicIP}`);
-    console.log(`   📡 Listening on: ${publicIP}:${PORT}`);
-    logSystemResources();
+    console.log(`   📡 Listening on: http://${publicIP}:${PORT}`);
 });
