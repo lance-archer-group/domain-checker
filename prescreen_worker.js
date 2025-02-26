@@ -45,15 +45,16 @@ async function checkWebsite(domainData) {
         });
 
         status = response.status;
-        finalUrl = response.url.toLowerCase();
+        finalUrl = response.url.toLowerCase(); // ✅ Normalize for case-insensitive filtering
 
+        // ✅ Now apply filtering on the final URL
         if (finalUrl.includes("domain")) {
             console.log(`❌ [Worker ${process.pid}] ${domain} → Skipped (Final URL contains "domain"): ${finalUrl}`);
-            return { domain, list_number, status, error: `Filtered (Final URL contains "domain")`, pageSize: 0, final_url: finalUrl };
+            return { domain, list_number, status, error_reason: `Filtered (Final URL contains "domain")`, pageSize: 0, final_url: finalUrl };
         }
 
+        // ✅ Get page size
         const contentLength = response.headers.get("content-length");
-
         if (contentLength) {
             pageSize = parseInt(contentLength, 10);
         } else {
