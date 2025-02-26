@@ -48,9 +48,9 @@ async function checkWebsite(domainData) {
         finalUrl = response.url.toLowerCase(); // ✅ Normalize for case-insensitive filtering
 
         // ✅ Now apply filtering on the final URL
-        if (finalUrl.includes("domain")) {
-            console.log(`❌ [Worker ${process.pid}] ${domain} → Skipped (Final URL contains "domain"): ${finalUrl}`);
-            return { domain, list_number, status, error_reason: `Filtered (Final URL contains "domain")`, pageSize: 0, final_url: finalUrl };
+        if (finalUrl.includes("domain") || finalUrl.includes("afternic")) {
+            console.log(`❌ [Worker ${process.pid}] ${domain} → Skipped (Final URL contains "domain" or "afternic"): ${finalUrl}`);
+            return { domain, list_number, status: "error", error_reason: `Filtered (Final URL contains "domain" or "afternic")`, pageSize: 0, final_url: finalUrl };
         }
 
         // ✅ Get page size
@@ -75,6 +75,7 @@ async function checkWebsite(domainData) {
         return { domain, list_number, status: "error", error_reason: error.message, pageSize: 0, final_url: "N/A" };
     }
 }
+
 
 
 
