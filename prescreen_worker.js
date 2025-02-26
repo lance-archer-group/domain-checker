@@ -26,7 +26,7 @@ async function checkDNS(domain) {
 async function checkWebsite(domainData) {
     if (!domainData || !domainData.domain || !domainData.list_number) {
         console.error("❌ Invalid domainData received:", domainData);
-        return { domain: "unknown", list_number: "unknown", status: "error", error: "Invalid domain data", parked: true };
+        return { domain: "unknown", list_number: "unknown", status: "error", error: "Invalid domain data", parked: true, pageSize: 0 };
     }
 
     const domain = domainData.domain.trim();
@@ -38,7 +38,7 @@ async function checkWebsite(domainData) {
     // ✅ Check if domain has a valid DNS record before requesting
     if (!(await checkDNS(domain))) {
         console.log(`❌ [Worker ${process.pid}] ${domain} does not resolve.`);
-        return { domain, list_number, status: "error", error: "DNS resolution failed", parked: true };
+        return { domain, list_number, status: "error", error: "DNS resolution failed", parked: true, pageSize: 0 };
     }
 
     try {
@@ -62,19 +62,14 @@ async function checkWebsite(domainData) {
         }
 
         // ✅ If page is too small, mark as parked
-        if (pageSize < MIN_PAGE_SIZE) {
-            console.log(`❌ [Worker ${process.pid}] ${domain} page size too small (${(pageSize / 1024).toFixed(2)} KB)`);
-            return { domain, list_number, status, error: "Page size too small", parked: true };
-        }
-
-        // ✅ Check for parked domain indicators
-        const isParked = PARKED_KEYWORDS.some(keyword => pageContent.includes(keyword));
+        const isParked = pageSize < MIN_PAGE_SIZE || PARKED_KEYWORDS.some(keyword => pageContent.includes(keyword));
 
         console.log(`✅ [Worker ${process.pid}] Completed: ${domain} → Status: ${status}, Page Size: ${(pageSize / 1024).toFixed(2)} KB, Parked: ${isParked}`);
-        return { domain, list_number, status, parked: isParked };
+
+        return { domain, list_number, status, parked: isParked, pageSize: (pageSize / 1024).toFixed(2) };
     } catch (error) {
         console.log(`❌ [Worker ${process.pid}] Error on ${domain}: ${error.message}`);
-        return { domain, list_number, status: "error", error: error.message, parked: true };
+        return { domain, list_number, status: "error", error: error.message, parked: true, pageSize: 0 };
     }
 }
 
