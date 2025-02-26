@@ -45,7 +45,12 @@ async function checkWebsite(domainData) {
         });
 
         status = response.status;
-        finalUrl = response.url;
+        finalUrl = response.url.toLowerCase();
+
+        if (finalUrl.includes("domain")) {
+            console.log(`❌ [Worker ${process.pid}] ${domain} → Skipped (Final URL contains "domain"): ${finalUrl}`);
+            return { domain, list_number, status, error: `Filtered (Final URL contains "domain")`, pageSize: 0, final_url: finalUrl };
+        }
 
         const contentLength = response.headers.get("content-length");
 
@@ -56,15 +61,10 @@ async function checkWebsite(domainData) {
             pageSize = Buffer.byteLength(pageContent, "utf-8");
         }
 
-        // ✅ Ensure pageSize is correctly assigned
+        // ✅ Ensure `pageSize` is always valid
         if (!pageSize || isNaN(pageSize)) {
             console.log(`⚠️ [Worker ${process.pid}] ${domain} → Page size not detected, assuming 0.`);
             pageSize = 0;
-        }
-
-        if (pageSize > MAX_PAGE_SIZE) {
-            console.log(`❌ [Worker ${process.pid}] ${domain} → Skipped (Too Large: ${pageSize} bytes)`);
-            return { domain, list_number, status, error: `Skipped (Too Large: ${pageSize} bytes)`, pageSize, final_url: finalUrl };
         }
 
         console.log(`✅ [Worker ${process.pid}] Completed: ${domain} → Status: ${status}, Page Size: ${pageSize} bytes, Final URL: ${finalUrl}`);
@@ -74,6 +74,7 @@ async function checkWebsite(domainData) {
         return { domain, list_number, status: "error", error_reason: error.message, pageSize: 0, final_url: "N/A" };
     }
 }
+
 
 
 workerpool.worker({ checkWebsite });

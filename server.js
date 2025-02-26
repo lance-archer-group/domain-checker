@@ -188,8 +188,10 @@ async function processCSV(inputFile, goodFile, badFile) {
 // ✅ Function to write CSV results
 function writeCSV(filename, data) {
     const ws = fs.createWriteStream(filename);
-    csv.write(data, { headers: ["domain", "list_number", "status", "pageSize (KB)", "parked", "error_reason", "final_url"] }).pipe(ws);
+    csv.write(data, { headers: ["domain", "list_number", "status", "pageSize (bytes)", "error_reason", "final_url"] }).pipe(ws);
 }
+
+
 
 // ✅ Schedule deletion of old files (every day at midnight)
 schedule.scheduleJob("0 0 * * *", () => {
