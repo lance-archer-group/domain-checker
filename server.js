@@ -122,50 +122,47 @@ app.get("/download/:filename", (req, res) => {
 
 // ✅ Function to process CSV with worker pool
 async function processCSV(inputFile, goodFile, badFile) {
-    const domains = [];
-
     return new Promise((resolve, reject) => {
+        const tasks = [];
+        
         fs.createReadStream(inputFile)
             .pipe(csv.parse({ headers: true }))
-            .on("data", row => {
+            .on("data", async row => {
                 if (row.domain && row.list_number) {
-                    domains.push({ domain: row.domain.trim(), list_number: row.list_number.trim() });
-                }
-            })
-            .on("end", async () => {
-                console.log(`🚀 Processing ${domains.length} domains with worker pool...`);
-
-                const tasks = domains.map(domain =>
-                    pool.exec("checkWebsite", [domain])
+                    const domainData = { domain: row.domain.trim(), list_number: row.list_number.trim() };
+                    
+                    const task = pool.exec("checkWebsite", [domainData])
                         .timeout(10000)
                         .catch(() => ({
-                            domain: domain.domain,
-                            list_number: domain.list_number,
+                            domain: domainData.domain,
+                            list_number: domainData.list_number,
                             status: "error",
                             error_reason: "Timeout exceeded",
                             parked: true,
                             pageSize: 0,
                             final_url: "N/A"
-                        }))
-                );
-
+                        }));
+                    
+                    tasks.push(task);
+                }
+            })
+            .on("end", async () => {
+                console.log(`🚀 Processing ${tasks.length} domains with worker pool...`);
+                
                 const results = await Promise.allSettled(tasks);
-
+                
                 const goodResults = [];
                 const badResults = [];
-
+                
                 results.forEach(result => {
                     if (result.status === "fulfilled") {
                         const data = result.value;
-
-                        // ✅ DNS & network errors should be classified as "bad"
-                        if (data.status === "error" || data.parked) {
+                        if (data.status === "error" || data.parked || data.error_reason) {
                             badResults.push(data);
                         } else {
                             goodResults.push(data);
                         }
                     } else {
-                        // ✅ Handle any errors that caused rejection
                         badResults.push({
                             domain: "unknown",
                             list_number: "unknown",
