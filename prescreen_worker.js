@@ -22,17 +22,17 @@ async function checkDNS(domain) {
 
 async function checkWebsite(domainData) {
     if (!domainData || !domainData.domain || !domainData.list_number) {
-        return { domain: "unknown", list_number: "unknown", status: "error", error_reason: "Invalid domain data", parked: true, pageSize: 0 };
+        return { domain: "unknown", list_number: "unknown", status: "error", error_reason: "Invalid domain data", parked: false, pageSize: 0, final_url: "N/A" };
     }
 
     const domain = domainData.domain.trim();
     const list_number = domainData.list_number.trim();
-    let status = "unknown", pageSize = 0, errorReason = "";
+    let status = "unknown", pageSize = 0, errorReason = "", isParked = false, pageContent = "", finalUrl = `http://${domain}`;
 
     console.log(`🟡 [Worker ${process.pid}] Checking: ${domain} (List #${list_number})`);
 
     if (!(await checkDNS(domain))) {
-        return { domain, list_number, status: "error", error_reason: "DNS resolution failed", parked: true, pageSize: 0 };
+        return { domain, list_number, status: "error", error_reason: "DNS resolution failed", parked: false, pageSize: 0, final_url: "N/A" };
     }
 
     try {
@@ -40,14 +40,15 @@ async function checkWebsite(domainData) {
             method: "GET",
             headers: {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
-            }
+            },
+            redirect: "follow" // ✅ Automatically follows redirects
         });
 
         status = response.status;
+        finalUrl = response.url; // ✅ Capture the final redirected URL
 
         // ✅ First, try to use Content-Length header
         const contentLength = response.headers.get("content-length");
-        let pageContent = "";
 
         if (contentLength) {
             pageSize = parseInt(contentLength, 10);
@@ -57,30 +58,30 @@ async function checkWebsite(domainData) {
             pageSize = Buffer.byteLength(pageContent, "utf-8");
         }
 
-        // ✅ Skip if the page is too small (likely parked/empty)
+        // ✅ Log small pages but DO NOT mark them as parked unless they contain parked keywords
         if (pageSize < MIN_PAGE_SIZE) {
-            console.log(`❌ [Worker ${process.pid}] ${domain} → Skipped (Too Small: ${pageSize} bytes)`);
-            return { domain, list_number, status, error: `Skipped (Too Small: ${pageSize} bytes)`, parked: true, pageSize };
+            console.log(`⚠️ [Worker ${process.pid}] ${domain} → Small page (${pageSize} bytes), but not automatically parked.`);
         }
 
         // ✅ Skip if the page is too large (not relevant)
         if (pageSize > MAX_PAGE_SIZE) {
             console.log(`❌ [Worker ${process.pid}] ${domain} → Skipped (Too Large: ${pageSize} bytes)`);
-            return { domain, list_number, status, error: `Skipped (Too Large: ${pageSize} bytes)`, parked: false, pageSize };
+            return { domain, list_number, status, error: `Skipped (Too Large: ${pageSize} bytes)`, parked: false, pageSize, final_url: finalUrl };
         }
 
-        // ✅ Check for parked domain indicators in the page content
+        // ✅ Load page content only if not already fetched
         if (!pageContent) {
             pageContent = await response.text();
         }
 
-        const isParked = PARKED_KEYWORDS.some(keyword => pageContent.includes(keyword));
+        // ✅ Mark as parked ONLY if keywords match
+        isParked = PARKED_KEYWORDS.some(keyword => pageContent.includes(keyword));
 
-        console.log(`✅ [Worker ${process.pid}] Completed: ${domain} → Status: ${status}, Page Size: ${pageSize} bytes, Parked: ${isParked}`);
+        console.log(`✅ [Worker ${process.pid}] Completed: ${domain} → Status: ${status}, Page Size: ${pageSize} bytes, Parked: ${isParked}, Final URL: ${finalUrl}`);
 
-        return { domain, list_number, status, pageSize, parked: isParked };
+        return { domain, list_number, status, pageSize, parked: isParked, final_url: finalUrl };
     } catch (error) {
-        return { domain, list_number, status: "error", error_reason: error.message, parked: true, pageSize: 0 };
+        return { domain, list_number, status: "error", error_reason: error.message, parked: false, pageSize: 0, final_url: "N/A" };
     }
 }
 
