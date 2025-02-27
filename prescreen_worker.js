@@ -1,10 +1,13 @@
-const workerpool = require("workerpool");
+onst workerpool = require("workerpool");
 const { fetch } = require("undici");
 const dns = require("dns").promises;
 
 // Page size limits
 const MIN_PAGE_SIZE = 1500;   // 5 KB
 const MAX_PAGE_SIZE = 5 * 1024 * 1024; // 5 MB
+
+// Status codes that are considered "good"
+const ACCEPTED_STATUS_CODES = [200, 301];
 
 // Terms to filter out in final URL
 const FILTERED_TERMS = [
@@ -16,7 +19,7 @@ const FILTERED_TERMS = [
     "ets.org", "wyndhamhotels.com", "sawblade.com", "visahq.com", 
     "resortvacationstogo.com", ".uk", ".de", ".ru", ".ch", ".nl", ".it", 
     ".fr", ".se", ".cn", ".pl", ".eu", ".br", ".jp", ".au",
-    "clickfunnels.com", "chaturbate.com", "instagram.com", "zoneiraq.com"
+    "clickfunnels.com", "chaturbate.com", "instagram.com", "zoneiraq.com","hosting", ".ca"
 ];
 
 // Define an array of accepted English-based language codes
@@ -81,6 +84,20 @@ async function checkWebsite(domainData) {
 
         status = response.status;
         finalUrl = response.url.toLowerCase();
+
+        // **Check if status code is accepted**
+        if (!ACCEPTED_STATUS_CODES.includes(status)) {
+            console.log(`❌ [Worker ${process.pid}] ${domain} → Skipped (Unaccepted status code ${status}): ${finalUrl}`);
+            return {
+                domain,
+                list_number,
+                status: "error",
+                error_reason: `Unaccepted status code (${status})`,
+                pageSize: 0,
+                final_url: finalUrl,
+                language
+            };
+        }
 
         // **Final URL check - Filtering out blocked domains, TLDs, and ww##. subdomains**
         if (FILTERED_TERMS.some(term => finalUrl.includes(term)) || WW_SUBDOMAIN_REGEX.test(finalUrl)) {
