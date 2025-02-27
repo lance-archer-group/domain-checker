@@ -16,6 +16,12 @@ const PORT = process.env.PORT || 3000;
 const pool = workerpool.pool("./prescreen_worker.js", { maxWorkers: os.cpus().length });
 const BUBBLE_API_URL = "https://d132.bubble.is/site/dataorchard/version-test/api/1.1/wf/webhookfile";
 
+// ⭐️ Ensure "results" folder exists as soon as the server starts
+const resultsDir = "results";
+if (!fs.existsSync(resultsDir)) {
+    fs.mkdirSync(resultsDir);
+}
+
 // ✅ Get the actual hostname (useful for logs)
 const getHostname = () => os.hostname();
 
@@ -60,7 +66,6 @@ async function sendToBubble(fileType, filePath) {
     }
 }
 
-
 // ✅ Configure file upload (CSV only)
 const upload = multer({
     dest: "uploads/",
@@ -83,6 +88,7 @@ app.post("/upload", upload.single("file"), async (req, res) => {
     const goodFile = path.join(outputDir, `${baseFilename}_good.csv`);
     const badFile = path.join(outputDir, `${baseFilename}_bad.csv`);
 
+    // Make sure the results folder exists (it will by now, but just in case)
     if (!fs.existsSync(outputDir)) {
         fs.mkdirSync(outputDir);
     }
@@ -129,7 +135,10 @@ async function processCSV(inputFile, goodFile, badFile) {
             .pipe(csv.parse({ headers: true }))
             .on("data", async row => {
                 if (row.domain && row.list_number) {
-                    const domainData = { domain: row.domain.trim(), list_number: row.list_number.trim() };
+                    const domainData = {
+                        domain: row.domain.trim(),
+                        list_number: row.list_number.trim()
+                    };
                     
                     const task = pool.exec("checkWebsite", [domainData])
                         .timeout(10000)
@@ -150,7 +159,6 @@ async function processCSV(inputFile, goodFile, badFile) {
                 console.log(`🚀 Processing ${tasks.length} domains with worker pool...`);
                 
                 const results = await Promise.allSettled(tasks);
-                
                 const goodResults = [];
                 const badResults = [];
                 
@@ -188,28 +196,33 @@ async function processCSV(inputFile, goodFile, badFile) {
 // ✅ Function to write CSV results
 function writeCSV(filename, data) {
     const ws = fs.createWriteStream(filename);
-    csv.write(data, { headers: ["domain", "list_number", "status", "pageSize", "error_reason", "final_url"] }).pipe(ws);
+    csv.write(data, { headers: ["domain", "list_number", "status", "pageSize", "error_reason", "final_url"] })
+       .pipe(ws);
 }
-
-
-
 
 // ✅ Schedule deletion of old files (every day at midnight)
 schedule.scheduleJob("0 0 * * *", () => {
-    const resultsDir = "results";
     const oneWeekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
 
+    // fs.readdir is safe now because the "results" folder definitely exists
     fs.readdir(resultsDir, (err, files) => {
-        if (err) return console.error("❌ Error reading results directory:", err);
+        if (err) {
+            return console.error("❌ Error reading results directory:", err);
+        }
 
         files.forEach(file => {
             const filePath = path.join(resultsDir, file);
             fs.stat(filePath, (err, stats) => {
-                if (err) return console.error("❌ Error getting file stats:", err);
+                if (err) {
+                    return console.error("❌ Error getting file stats:", err);
+                }
                 if (stats.mtimeMs < oneWeekAgo) {
                     fs.unlink(filePath, err => {
-                        if (err) console.error("❌ Error deleting file:", err);
-                        else console.log(`🗑️ Deleted old file: ${file}`);
+                        if (err) {
+                            console.error("❌ Error deleting file:", err);
+                        } else {
+                            console.log(`🗑️ Deleted old file: ${file}`);
+                        }
                     });
                 }
             });
