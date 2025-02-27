@@ -1,3 +1,4 @@
+require("dotenv").config();
 const express = require("express");
 const multer = require("multer");
 const fs = require("fs");
@@ -9,6 +10,7 @@ const { fetch } = require("undici");
 const dns = require("dns").promises;
 const schedule = require("node-schedule");
 const axios = require("axios");
+const { MongoClient } = require("mongodb"); // MongoDB driver
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -95,6 +97,65 @@ app.get("/download/:filename", (req, res) => {
 // ✅ Define Allowed Languages
 const ALLOWED_LANGUAGES = ["en", "en-us"];
 
+/**
+ * Upload CSV processing results to MongoDB.
+ * Good results are inserted into collection "valid_domains",
+ * and bad results into "failed_domains", within database "Archer_Group".
+ *
+ * @param {Array} goodResults - Array of good result objects.
+ * @param {Array} badResults - Array of bad result objects.
+ */
+async function uploadToMongoDB(goodResults, badResults) {
+    const client = new MongoClient(process.env.MONGODB_URI);
+    try {
+        await client.connect();
+        const db = client.db("Archer_Group");
+
+        if (goodResults.length > 0) {
+            const validDomainsCollection = db.collection("valid_domains");
+            const bulkOps = goodResults.map(doc => ({
+                updateOne: {
+                    filter: { domain: doc.domain.toLowerCase() },
+                    update: {
+                        $set: {
+                            ...doc,
+                            domain: doc.domain.toLowerCase(), // normalize domain
+                            updatedAt: new Date()
+                        },
+                        $setOnInsert: { createdAt: new Date() }
+                    },
+                    upsert: true
+                }
+            }));
+            const result = await validDomainsCollection.bulkWrite(bulkOps);
+            console.log(`✅ Upserted ${result.upsertedCount} good domains to MongoDB, matched ${result.matchedCount}`);
+        }
+        if (badResults.length > 0) {
+            const failedDomainsCollection = db.collection("failed_domains");
+            const bulkOps = badResults.map(doc => ({
+                updateOne: {
+                    filter: { domain: doc.domain.toLowerCase() },
+                    update: {
+                        $set: {
+                            ...doc,
+                            domain: doc.domain.toLowerCase(),
+                            updatedAt: new Date()
+                        },
+                        $setOnInsert: { createdAt: new Date() }
+                    },
+                    upsert: true
+                }
+            }));
+            const result = await failedDomainsCollection.bulkWrite(bulkOps);
+            console.log(`✅ Upserted ${result.upsertedCount} bad domains to MongoDB, matched ${result.matchedCount}`);
+        }
+    } catch (err) {
+        console.error("❌ Error uploading to MongoDB:", err);
+    } finally {
+        await client.close();
+    }
+}
+
 // ✅ Function to process CSV
 async function processCSV(inputFile, goodFile, badFile) {
     return new Promise((resolve, reject) => {
@@ -124,24 +185,42 @@ async function processCSV(inputFile, goodFile, badFile) {
                         const isAllowedLanguage = (normalizedLanguage === "n/a" || ALLOWED_LANGUAGES.includes(normalizedLanguage));
 
                         (data.status !== "error" && data.pageSize > 0 && isAllowedLanguage)
-                            ? goodResults.push(data) : badResults.push(data);
+                            ? goodResults.push(data)
+                            : badResults.push(data);
                     } else {
-                        badResults.push({ domain: "unknown", list_number: "unknown", status: "error", error_reason: "Worker thread failed", pageSize: 0, final_url: "N/A", language: "N/A" });
+                        badResults.push({
+                            domain: "unknown",
+                            list_number: "unknown",
+                            status: "error",
+                            error_reason: "Worker thread failed",
+                            pageSize: 0,
+                            final_url: "N/A",
+                            language: "N/A"
+                        });
                     }
                 });
+                // Log counts of good and bad rows here:
+                console.log(`Good rows count: ${goodResults.length}`);
+                console.log(`Bad rows count: ${badResults.length}`);
 
-                writeCSV(goodFile, goodResults);
-                writeCSV(badFile, badResults);
+                // Write CSVs with custom headers:
+                // For good CSV, omit error_reason and use status instead.
+                writeCSV(goodFile, goodResults, ["domain", "list_number", "status", "pageSize", "final_url", "language"]);
+                // For bad CSV, keep the error_reason column.
+                writeCSV(badFile, badResults, ["domain", "list_number", "status", "pageSize", "error_reason", "final_url", "language"]);
+
+                // Upload results to MongoDB.
+                await uploadToMongoDB(goodResults, badResults);
                 resolve();
             })
             .on("error", reject);
     });
 }
 
-// ✅ Function to write CSV results
-function writeCSV(filename, data) {
+// ✅ Function to write CSV results with custom headers
+function writeCSV(filename, data, headers) {
     const ws = fs.createWriteStream(filename);
-    csv.write(data, { headers: ["domain", "list_number", "status", "pageSize", "error_reason", "final_url", "language"] }).pipe(ws);
+    csv.write(data, { headers }).pipe(ws);
 }
 
 // ✅ Start the server

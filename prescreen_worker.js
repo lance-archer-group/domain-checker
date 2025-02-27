@@ -2,32 +2,69 @@ const workerpool = require("workerpool");
 const { fetch } = require("undici");
 const dns = require("dns").promises;
 
-// Page size limits
-const MIN_PAGE_SIZE = 1500;   // 5 KB
+const MIN_PAGE_SIZE = 1500; // Minimum page size in bytes (approx 1.5 KB)
 const MAX_PAGE_SIZE = 5 * 1024 * 1024; // 5 MB
 
-// Status codes that are considered "good"
 const ACCEPTED_STATUS_CODES = [200, 301];
 
-// Terms to filter out in final URL
-const FILTERED_TERMS = [
-    "domain", "atom.com", "dynadot.com", "afternic", "parking", "sedo", 
-    ".mx", "amazon.com", "ebay.com", "etsy.com", "allstate.com", "slicelife.com",
-    "placester.com", "dignitymemorial.com", "car-part.com", "raymondjames.com",
-    "paparazziaccessories.com", "proagentwebsites.com", "vacationstogo.com",
-    "vacasa.com", "marriott.com", "intermountainhealthcare.org", "remax.com",
-    "ets.org", "wyndhamhotels.com", "sawblade.com", "visahq.com", 
-    "resortvacationstogo.com", ".uk", ".de", ".ru", ".ch", ".nl", ".it", 
-    ".fr", ".se", ".cn", ".pl", ".eu", ".br", ".jp", ".au", ".ca",
-    "clickfunnels.com", "chaturbate.com", "instagram.com", "zoneiraq.com", "hosting"
-];
+const FILTERED_TERMS_GROUPED = {
+    general: ["domain", "parking", "hosting"],
+    socialMedia: ["discord.com", "youtube.com", "flicker.com", "linkedin.com", "instagram.com", "flipboard.com"],
+    marketplaces: ["amazon.com", "ebay.com", "etsy.com", "paparazziaccessories.com"],
+    realEstate: ["placester.com", "remax.com", "proagentwebsites.com"],
+    hotels: ["marriott.com", "wyndhamhotels.com", "vacasa.com", "vacationstogo.com", "resortvacationstogo.com"],
+    financial: ["raymondjames.com", "visahq.com"],
+    health: ["intermountainhealthcare.org", "dignitymemorial.com", "allstate.com"],
+    techDomains: ["dynadot.com", "afternic", "sedo", "atom.com", "clickfunnels.com"],
+    adult: ["chaturbate.com"],
+    government: [".gov"],
+    TLDs: [".mx", ".uk", ".de", ".ru", ".ch", ".nl", ".it", ".fr", ".se", ".cn", ".pl", ".eu", ".br", ".jp", ".au", ".ca", ".nz"],
+    other: ["zoneiraq.com"]
+};
 
-// Define an array of accepted English-based language codes
+// Flatten the grouped terms into one array for filtering.
+const FILTERED_TERMS = Object.values(FILTERED_TERMS_GROUPED).flat();
+
+// Only allow these language codes from the Content-Language header.
 const ALLOWED_LANGUAGES = ["en", "en-us"];
 
-// Regex to detect `ww##.` subdomains
+// Regex to catch subdomains like ww12.
 const WW_SUBDOMAIN_REGEX = /\bww\d+\./;
 
+// Terms to detect parking pages.
+const HTML_SCRAPE_TERMS = {
+    strict: [
+        "this domain is for sale",
+        "buy this domain",
+        "domain for sale",
+        "parked free",
+        "this site is parked",
+        "this page is parked",
+        "domain parking",
+        "sedoparking",
+        "sedo parking",
+        "afternic",
+        "namecheap marketplace",
+        "domain is parked",
+        "parking",
+        "hosting"
+    ],
+    regex: [
+        /this\s+domain\s+is\s+(currently\s+)?for\s+sale/i,
+        /buy\s+this\s+domain/i,
+        /this\s+page\s+is\s+parked/i,
+        /domain\s+parking/i,
+        /sedoparking/i,
+        /afternic/i,
+        /click\s+here\s+to\s+buy/i
+    ]
+};
+
+/**
+ * Check if the given domain resolves via DNS.
+ * @param {string} domain 
+ * @returns {Promise<boolean>}
+ */
 async function checkDNS(domain) {
     try {
         await dns.resolve(domain);
@@ -37,6 +74,18 @@ async function checkDNS(domain) {
     }
 }
 
+/**
+ * Fetches a website and performs several validations:
+ * - DNS resolution
+ * - HTTP status code
+ * - Final URL filtering
+ * - Language header verification
+ * - Page size boundaries
+ * - HTML content filtering (e.g., for parked domains)
+ *
+ * @param {Object} domainData - Should contain `domain` and `list_number`
+ * @returns {Promise<Object>} - The result object with status and details.
+ */
 async function checkWebsite(domainData) {
     if (!domainData || !domainData.domain || !domainData.list_number) {
         return {
@@ -51,21 +100,20 @@ async function checkWebsite(domainData) {
     }
 
     const domain = domainData.domain.trim();
-    const list_number = domainData.list_number.trim();
-    let status = "unknown",
-        pageSize = 0,
-        finalUrl = `http://${domain}`;
-    
-    let language = "N/A";  // Default if no Content-Language header is present
+    const listNumber = domainData.list_number.trim();
+    let status = "unknown";
+    let pageSize = 0;
+    let finalUrl = `http://${domain}`;
+    let language = "N/A";
 
-    console.log(`🟡 [Worker ${process.pid}] Checking: ${domain} (List #${list_number})`);
+    console.log(`🟡 [Worker ${process.pid}] Checking: ${domain} (List #${listNumber})`);
 
-    // Check DNS
+    // Check DNS resolution
     if (!(await checkDNS(domain))) {
         console.log(`❌ [Worker ${process.pid}] DNS resolution failed for ${domain}`);
         return {
             domain,
-            list_number,
+            list_number: listNumber,
             status: "error",
             error_reason: "DNS resolution failed",
             pageSize: 0,
@@ -88,12 +136,11 @@ async function checkWebsite(domainData) {
 
         console.log(`🔍 [Worker ${process.pid}] Response: ${status} - ${finalUrl}`);
 
-        // **Check if status code is accepted**
+        // Check if the response status is acceptable.
         if (!ACCEPTED_STATUS_CODES.includes(status)) {
-            console.log(`❌ [Worker ${process.pid}] ${domain} → Skipped (Unaccepted status code ${status}): ${finalUrl}`);
             return {
                 domain,
-                list_number,
+                list_number: listNumber,
                 status: "error",
                 error_reason: `Unaccepted status code (${status})`,
                 pageSize: 0,
@@ -102,30 +149,27 @@ async function checkWebsite(domainData) {
             };
         }
 
-        // **Final URL check - Filtering out blocked domains, TLDs, and ww##. subdomains**
+        // Filter out URLs with blocked terms or specific subdomain patterns.
         if (FILTERED_TERMS.some(term => finalUrl.includes(term)) || WW_SUBDOMAIN_REGEX.test(finalUrl)) {
-            console.log(`❌ [Worker ${process.pid}] ${domain} → Skipped (Blocked by filter): ${finalUrl}`);
             return {
                 domain,
-                list_number,
+                list_number: listNumber,
                 status: "error",
-                error_reason: "Filtered (Final URL contains a blocked term or ww##. subdomain)",
+                error_reason: "Filtered (Final URL contains a blocked term or ww## subdomain)",
                 pageSize: 0,
                 final_url: finalUrl,
                 language
             };
         }
 
-        // **Get and validate the language header**
+        // Validate the Content-Language header if present.
         const languageHeader = response.headers.get("content-language");
         if (languageHeader) {
             language = languageHeader.toLowerCase();
-            console.log(`📝 [Worker ${process.pid}] Language detected: ${language}`);
-
             if (!ALLOWED_LANGUAGES.includes(language)) {
                 return {
                     domain,
-                    list_number,
+                    list_number: listNumber,
                     status: "error",
                     error_reason: `Bad language header (${language})`,
                     pageSize: 0,
@@ -135,20 +179,20 @@ async function checkWebsite(domainData) {
             }
         }
 
-        // **Determine page size**
+        // Determine the page size using either the Content-Length header or the actual content size.
         const contentLength = response.headers.get("content-length");
-        pageSize = contentLength ? parseInt(contentLength, 10) : Buffer.byteLength(await response.text(), "utf-8");
+        const htmlContent = await response.text();
+        pageSize = contentLength ? parseInt(contentLength, 10) : Buffer.byteLength(htmlContent, "utf-8");
 
         if (!pageSize || isNaN(pageSize)) {
-            console.log(`⚠️ [Worker ${process.pid}] ${domain} → Page size not detected, assuming 0.`);
             pageSize = 0;
         }
 
-        // **Apply page size checks**
+        // Validate page size limits.
         if (pageSize < MIN_PAGE_SIZE) {
             return {
                 domain,
-                list_number,
+                list_number: listNumber,
                 status: "error",
                 error_reason: `Page size too small (< ${MIN_PAGE_SIZE} bytes)`,
                 pageSize,
@@ -159,7 +203,7 @@ async function checkWebsite(domainData) {
         if (pageSize > MAX_PAGE_SIZE) {
             return {
                 domain,
-                list_number,
+                list_number: listNumber,
                 status: "error",
                 error_reason: `Page size too large (> ${MAX_PAGE_SIZE} bytes)`,
                 pageSize,
@@ -168,14 +212,56 @@ async function checkWebsite(domainData) {
             };
         }
 
+        // Check for HTML content patterns indicating a parking page.
+        // Check for HTML content patterns indicating a parking page.
+        let detectedTerm = null;
+
+        // First, check for strict terms
+        for (const term of HTML_SCRAPE_TERMS.strict) {
+            if (htmlContent.includes(term)) {
+                detectedTerm = term;
+                break;
+            }
+        }
+
+        // If no strict term was found, check the regex patterns
+        if (!detectedTerm) {
+            for (const regex of HTML_SCRAPE_TERMS.regex) {
+                const match = htmlContent.match(regex);
+                if (match) {
+                    detectedTerm = match[0];
+                    break;
+                }
+            }
+        }
+
+        if (detectedTerm) {
+            console.log(`❌ [Worker ${process.pid}] ${domain} → Skipped (Parking Page Detected: ${detectedTerm})`);
+            return {
+                domain,
+                list_number: listNumber,
+                status: "error",
+                error_reason: `Parking page detected: "${detectedTerm}"`,
+                pageSize,
+                final_url: finalUrl,
+                language
+            };
+        }
+
         console.log(`✅ [Worker ${process.pid}] Completed: ${domain} → Status: ${status}, Page Size: ${pageSize} bytes, Final URL: ${finalUrl}`);
 
-        return { domain, list_number, status, pageSize, final_url: finalUrl, language };
-    } catch (error) {
-        console.log(`❌ [Worker ${process.pid}] Fetch error for ${domain}: ${error.message}`);
         return {
             domain,
-            list_number,
+            list_number: listNumber,
+            status,
+            pageSize,
+            final_url: finalUrl,
+            language
+        };
+    } catch (error) {
+        return {
+            domain,
+            list_number: listNumber,
             status: "error",
             error_reason: error.message,
             pageSize: 0,
