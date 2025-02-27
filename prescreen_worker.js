@@ -7,7 +7,32 @@ const MIN_PAGE_SIZE = 1500;   // 5 KB
 const MAX_PAGE_SIZE = 5 * 1024 * 1024; // 5 MB
 
 // Terms to filter out in final URL
-const FILTERED_TERMS = ["domain", "afternic", "parking", "sedo", ".mx"];
+const FILTERED_TERMS = ["domain",
+    "afternic", 
+    "parking", 
+    "sedo", 
+    ".mx", 
+    "amazon.com", 
+    "ebay.com", 
+    "etsy.com", 
+    "allstate.com", 
+    "slicelife.com", 
+    "placester.com", 
+    "dignitymemorial.com", 
+    "car-part.com", 
+    "raymondjames.com", 
+    "paparazziaccessories.com", 
+    "proagentwebsites.com", 
+    "vacationstogo.com", 
+    "vacasa.com", 
+    "marriott.com", 
+    "intermountainhealthcare.org", 
+    "remax.com", 
+    "ets.org", 
+    "wyndhamhotels.com", 
+    "sawblade.com", 
+    "visahq.com", 
+    "resortvacationstogo.com"];
 
 // Define an array of accepted English-based language codes "en-gb" "en-ca", "en-au", "en-nz", "en-in"
 const ALLOWED_LANGUAGES = ["en", "en-us"];
