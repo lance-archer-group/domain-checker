@@ -15,11 +15,15 @@ const FILTERED_TERMS = [
     "vacasa.com", "marriott.com", "intermountainhealthcare.org", "remax.com",
     "ets.org", "wyndhamhotels.com", "sawblade.com", "visahq.com", 
     "resortvacationstogo.com", ".uk", ".de", ".ru", ".ch", ".nl", ".it", 
-    ".fr", ".se", ".cn", ".pl", ".eu", ".br", ".jp", ".au","clickfunnels.com"
+    ".fr", ".se", ".cn", ".pl", ".eu", ".br", ".jp", ".au","clickfunnels.com","chaturbate.com","instagram.com",
+    "zoneiraq.com"
 ];
 
 // Define an array of accepted English-based language codes
 const ALLOWED_LANGUAGES = ["en", "en-us"];
+
+// Regex to detect `ww##.` subdomains
+const WW_SUBDOMAIN_REGEX = /\b://ww\d+\./;
 
 async function checkDNS(domain) {
     try {
@@ -78,14 +82,14 @@ async function checkWebsite(domainData) {
         status = response.status;
         finalUrl = response.url.toLowerCase();
 
-        // **Final URL check - Filtering out blocked domains or TLDs**
-        if (FILTERED_TERMS.some(term => finalUrl.includes(term))) {
-            console.log(`❌ [Worker ${process.pid}] ${domain} → Skipped (Final URL contains a filtered term): ${finalUrl}`);
+        // **Final URL check - Filtering out blocked domains, TLDs, and `ww##.` subdomains**
+        if (FILTERED_TERMS.some(term => finalUrl.includes(term)) || WW_SUBDOMAIN_REGEX.test(finalUrl)) {
+            console.log(`❌ [Worker ${process.pid}] ${domain} → Skipped (Blocked by filter): ${finalUrl}`);
             return {
                 domain,
                 list_number,
                 status: "error",
-                error_reason: `Filtered (Final URL contains a blocked term)`,
+                error_reason: `Filtered (Final URL contains a blocked term or ww##. subdomain)`,
                 pageSize: 0,
                 final_url: finalUrl,
                 language
@@ -103,7 +107,7 @@ async function checkWebsite(domainData) {
                     domain,
                     list_number,
                     status: "error",
-                    error_reason: `Bad language header (${language})`,  // No extra quotes
+                    error_reason: `Bad language header (${language})`,
                     pageSize: 0,
                     final_url: finalUrl,
                     language
