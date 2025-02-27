@@ -8,6 +8,7 @@ const MAX_PAGE_SIZE = 5 * 1024 * 1024; // 5 MB
 
 // Terms to filter out in final URL
 const FILTERED_TERMS = ["domain",
+    "atom.com"
     "afternic", 
     "parking", 
     "sedo", 
@@ -33,20 +34,20 @@ const FILTERED_TERMS = ["domain",
     "sawblade.com", 
     "visahq.com", 
     "resortvacationstogo.com",
-    "uk",
-    "de",
-    "ru",
-    "ch",
-    "nl",
-    "it",
-    "fr",
-    "se",
-    "cn",
-    "pl",
-    "eu",
-    "br",
-    "jp",
-    "au"];
+    ".uk",
+    ".de",
+    ".ru",
+    ".ch",
+    ".nl",
+    ".it",
+    ".fr",
+    ".se",
+    ".cn",
+    ".pl",
+    ".eu",
+    ".br",
+    ".jp",
+    ".au"];
 
 // Define an array of accepted English-based language codes "en-gb" "en-ca", "en-au", "en-nz", "en-in"
 const ALLOWED_LANGUAGES = ["en", "en-us"];
