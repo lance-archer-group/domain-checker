@@ -2,9 +2,15 @@ const workerpool = require("workerpool");
 const { fetch } = require("undici");
 const dns = require("dns").promises;
 
-// Reintroduce page size checks.
+// Page size limits
 const MIN_PAGE_SIZE = 1500;   // 5 KB
 const MAX_PAGE_SIZE = 5 * 1024 * 1024; // 5 MB
+
+// Terms to filter out in final URL
+const FILTERED_TERMS = ["domain", "afternic", "parking", "sedo", ".mx"];
+
+// Define an array of accepted English-based language codes "en-gb" "en-ca", "en-au", "en-nz", "en-in"
+const ALLOWED_LANGUAGES = ["en", "en-us"];
 
 async function checkDNS(domain) {
     try {
@@ -23,7 +29,8 @@ async function checkWebsite(domainData) {
             status: "error",
             error_reason: "Invalid domain data",
             pageSize: 0,
-            final_url: "N/A"
+            final_url: "N/A",
+            language: "N/A"
         };
     }
 
@@ -31,9 +38,9 @@ async function checkWebsite(domainData) {
     const list_number = domainData.list_number.trim();
     let status = "unknown",
         pageSize = 0,
-        errorReason = "",
-        pageContent = "",
         finalUrl = `http://${domain}`;
+    
+    let language = "N/A";  // Default if no Content-Language header is present
 
     console.log(`🟡 [Worker ${process.pid}] Checking: ${domain} (List #${list_number})`);
 
@@ -45,12 +52,12 @@ async function checkWebsite(domainData) {
             status: "error",
             error_reason: "DNS resolution failed",
             pageSize: 0,
-            final_url: "N/A"
+            final_url: "N/A",
+            language
         };
     }
 
     try {
-        // Follow redirects, so finalUrl and pageSize correspond to the last page that loads
         const response = await fetch(`http://${domain}`, {
             method: "GET",
             headers: {
@@ -62,38 +69,53 @@ async function checkWebsite(domainData) {
         status = response.status;
         finalUrl = response.url.toLowerCase();
 
-        // Filter based on final URL (unchanged).
-        if (finalUrl.includes("domain") || finalUrl.includes("afternic")) {
-            console.log(
-                `❌ [Worker ${process.pid}] ${domain} → Skipped (Final URL contains "domain" or "afternic"): ${finalUrl}`
-            );
+        // Check if final URL contains any filtered terms
+        if (FILTERED_TERMS.some(term => finalUrl.includes(term))) {
+            console.log(`❌ [Worker ${process.pid}] ${domain} → Skipped (Final URL contains a filtered term): ${finalUrl}`);
             return {
                 domain,
                 list_number,
                 status: "error",
-                error_reason: `Filtered (Final URL contains "domain" or "afternic")`,
+                error_reason: `Filtered (Final URL contains a blocked term)`,
                 pageSize: 0,
-                final_url: finalUrl
+                final_url: finalUrl,
+                language
             };
         }
 
-        // Determine page size for the final page
+        // Get and validate the language header
+        const languageHeader = response.headers.get("content-language");
+        if (languageHeader) {
+            language = languageHeader.toLowerCase(); // Normalize to lowercase
+
+            // Only filter if language is provided and not in the allowed list
+            if (!ALLOWED_LANGUAGES.includes(language)) {
+                return {
+                    domain,
+                    list_number,
+                    status: "error",
+                    error_reason: `Bad language header (${language})`,  // No extra quotes
+                    pageSize: 0,
+                    final_url: finalUrl,
+                    language
+                };
+            }
+        }
+
+        // Determine page size
         const contentLength = response.headers.get("content-length");
         if (contentLength) {
             pageSize = parseInt(contentLength, 10);
         } else {
-            pageContent = await response.text();
-            pageSize = Buffer.byteLength(pageContent, "utf-8");
+            pageSize = Buffer.byteLength(await response.text(), "utf-8");
         }
 
         if (!pageSize || isNaN(pageSize)) {
-            console.log(
-                `⚠️ [Worker ${process.pid}] ${domain} → Page size not detected, assuming 0.`
-            );
+            console.log(`⚠️ [Worker ${process.pid}] ${domain} → Page size not detected, assuming 0.`);
             pageSize = 0;
         }
 
-        // Now apply min/max checks on the final page size
+        // Apply page size checks
         if (pageSize < MIN_PAGE_SIZE) {
             return {
                 domain,
@@ -101,7 +123,8 @@ async function checkWebsite(domainData) {
                 status: "error",
                 error_reason: `Page size too small (< ${MIN_PAGE_SIZE} bytes)`,
                 pageSize,
-                final_url: finalUrl
+                final_url: finalUrl,
+                language
             };
         }
         if (pageSize > MAX_PAGE_SIZE) {
@@ -111,15 +134,14 @@ async function checkWebsite(domainData) {
                 status: "error",
                 error_reason: `Page size too large (> ${MAX_PAGE_SIZE} bytes)`,
                 pageSize,
-                final_url: finalUrl
+                final_url: finalUrl,
+                language
             };
         }
 
-        console.log(
-            `✅ [Worker ${process.pid}] Completed: ${domain} → Status: ${status}, Page Size: ${pageSize} bytes, Final URL: ${finalUrl}`
-        );
+        console.log(`✅ [Worker ${process.pid}] Completed: ${domain} → Status: ${status}, Page Size: ${pageSize} bytes, Final URL: ${finalUrl}`);
 
-        return { domain, list_number, status, pageSize, final_url: finalUrl };
+        return { domain, list_number, status, pageSize, final_url: finalUrl, language };
     } catch (error) {
         return {
             domain,
@@ -127,7 +149,8 @@ async function checkWebsite(domainData) {
             status: "error",
             error_reason: error.message,
             pageSize: 0,
-            final_url: "N/A"
+            final_url: "N/A",
+            language
         };
     }
 }
