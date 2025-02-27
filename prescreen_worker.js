@@ -15,7 +15,7 @@ const FILTERED_TERMS = [
     "vacasa.com", "marriott.com", "intermountainhealthcare.org", "remax.com",
     "ets.org", "wyndhamhotels.com", "sawblade.com", "visahq.com", 
     "resortvacationstogo.com", ".uk", ".de", ".ru", ".ch", ".nl", ".it", 
-    ".fr", ".se", ".cn", ".pl", ".eu", ".br", ".jp", ".au"
+    ".fr", ".se", ".cn", ".pl", ".eu", ".br", ".jp", ".au","clickfunnels.com"
 ];
 
 // Define an array of accepted English-based language codes
