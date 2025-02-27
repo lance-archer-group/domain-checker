@@ -7,49 +7,18 @@ const MIN_PAGE_SIZE = 1500;   // 5 KB
 const MAX_PAGE_SIZE = 5 * 1024 * 1024; // 5 MB
 
 // Terms to filter out in final URL
-const FILTERED_TERMS = ["domain",
-    "atom.com"
-    "afternic", 
-    "parking", 
-    "sedo", 
-    ".mx", 
-    "amazon.com", 
-    "ebay.com", 
-    "etsy.com", 
-    "allstate.com", 
-    "slicelife.com", 
-    "placester.com", 
-    "dignitymemorial.com", 
-    "car-part.com", 
-    "raymondjames.com", 
-    "paparazziaccessories.com", 
-    "proagentwebsites.com", 
-    "vacationstogo.com", 
-    "vacasa.com", 
-    "marriott.com", 
-    "intermountainhealthcare.org", 
-    "remax.com", 
-    "ets.org", 
-    "wyndhamhotels.com", 
-    "sawblade.com", 
-    "visahq.com", 
-    "resortvacationstogo.com",
-    ".uk",
-    ".de",
-    ".ru",
-    ".ch",
-    ".nl",
-    ".it",
-    ".fr",
-    ".se",
-    ".cn",
-    ".pl",
-    ".eu",
-    ".br",
-    ".jp",
-    ".au"];
+const FILTERED_TERMS = [
+    "domain", "atom.com", "dynadot.com", "afternic", "parking", "sedo", 
+    ".mx", "amazon.com", "ebay.com", "etsy.com", "allstate.com", "slicelife.com",
+    "placester.com", "dignitymemorial.com", "car-part.com", "raymondjames.com",
+    "paparazziaccessories.com", "proagentwebsites.com", "vacationstogo.com",
+    "vacasa.com", "marriott.com", "intermountainhealthcare.org", "remax.com",
+    "ets.org", "wyndhamhotels.com", "sawblade.com", "visahq.com", 
+    "resortvacationstogo.com", ".uk", ".de", ".ru", ".ch", ".nl", ".it", 
+    ".fr", ".se", ".cn", ".pl", ".eu", ".br", ".jp", ".au"
+];
 
-// Define an array of accepted English-based language codes "en-gb" "en-ca", "en-au", "en-nz", "en-in"
+// Define an array of accepted English-based language codes
 const ALLOWED_LANGUAGES = ["en", "en-us"];
 
 async function checkDNS(domain) {
@@ -109,7 +78,7 @@ async function checkWebsite(domainData) {
         status = response.status;
         finalUrl = response.url.toLowerCase();
 
-        // Check if final URL contains any filtered terms
+        // **Final URL check - Filtering out blocked domains or TLDs**
         if (FILTERED_TERMS.some(term => finalUrl.includes(term))) {
             console.log(`❌ [Worker ${process.pid}] ${domain} → Skipped (Final URL contains a filtered term): ${finalUrl}`);
             return {
@@ -123,12 +92,12 @@ async function checkWebsite(domainData) {
             };
         }
 
-        // Get and validate the language header
+        // **Get and validate the language header**
         const languageHeader = response.headers.get("content-language");
         if (languageHeader) {
             language = languageHeader.toLowerCase(); // Normalize to lowercase
 
-            // Only filter if language is provided and not in the allowed list
+            // **Reject site if its language is NOT allowed**
             if (!ALLOWED_LANGUAGES.includes(language)) {
                 return {
                     domain,
@@ -142,7 +111,7 @@ async function checkWebsite(domainData) {
             }
         }
 
-        // Determine page size
+        // **Determine page size**
         const contentLength = response.headers.get("content-length");
         if (contentLength) {
             pageSize = parseInt(contentLength, 10);
@@ -155,7 +124,7 @@ async function checkWebsite(domainData) {
             pageSize = 0;
         }
 
-        // Apply page size checks
+        // **Apply page size checks**
         if (pageSize < MIN_PAGE_SIZE) {
             return {
                 domain,
