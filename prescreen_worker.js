@@ -32,7 +32,21 @@ const FILTERED_TERMS = ["domain",
     "wyndhamhotels.com", 
     "sawblade.com", 
     "visahq.com", 
-    "resortvacationstogo.com"];
+    "resortvacationstogo.com",
+    "uk",
+    "de",
+    "ru",
+    "ch",
+    "nl",
+    "it",
+    "fr",
+    "se",
+    "cn",
+    "pl",
+    "eu",
+    "br",
+    "jp",
+    "au"];
 
 // Define an array of accepted English-based language codes "en-gb" "en-ca", "en-au", "en-nz", "en-in"
 const ALLOWED_LANGUAGES = ["en", "en-us"];
