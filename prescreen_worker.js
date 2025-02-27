@@ -1,4 +1,4 @@
-onst workerpool = require("workerpool");
+const workerpool = require("workerpool");
 const { fetch } = require("undici");
 const dns = require("dns").promises;
 
@@ -18,14 +18,14 @@ const FILTERED_TERMS = [
     "vacasa.com", "marriott.com", "intermountainhealthcare.org", "remax.com",
     "ets.org", "wyndhamhotels.com", "sawblade.com", "visahq.com", 
     "resortvacationstogo.com", ".uk", ".de", ".ru", ".ch", ".nl", ".it", 
-    ".fr", ".se", ".cn", ".pl", ".eu", ".br", ".jp", ".au",
-    "clickfunnels.com", "chaturbate.com", "instagram.com", "zoneiraq.com","hosting", ".ca"
+    ".fr", ".se", ".cn", ".pl", ".eu", ".br", ".jp", ".au", ".ca",
+    "clickfunnels.com", "chaturbate.com", "instagram.com", "zoneiraq.com", "hosting"
 ];
 
 // Define an array of accepted English-based language codes
 const ALLOWED_LANGUAGES = ["en", "en-us"];
 
-// Regex to detect ww##. subdomains
+// Regex to detect `ww##.` subdomains
 const WW_SUBDOMAIN_REGEX = /\bww\d+\./;
 
 async function checkDNS(domain) {
@@ -62,6 +62,7 @@ async function checkWebsite(domainData) {
 
     // Check DNS
     if (!(await checkDNS(domain))) {
+        console.log(`❌ [Worker ${process.pid}] DNS resolution failed for ${domain}`);
         return {
             domain,
             list_number,
@@ -84,6 +85,8 @@ async function checkWebsite(domainData) {
 
         status = response.status;
         finalUrl = response.url.toLowerCase();
+
+        console.log(`🔍 [Worker ${process.pid}] Response: ${status} - ${finalUrl}`);
 
         // **Check if status code is accepted**
         if (!ACCEPTED_STATUS_CODES.includes(status)) {
@@ -116,9 +119,9 @@ async function checkWebsite(domainData) {
         // **Get and validate the language header**
         const languageHeader = response.headers.get("content-language");
         if (languageHeader) {
-            language = languageHeader.toLowerCase(); // Normalize to lowercase
+            language = languageHeader.toLowerCase();
+            console.log(`📝 [Worker ${process.pid}] Language detected: ${language}`);
 
-            // **Reject site if its language is NOT allowed**
             if (!ALLOWED_LANGUAGES.includes(language)) {
                 return {
                     domain,
@@ -169,6 +172,7 @@ async function checkWebsite(domainData) {
 
         return { domain, list_number, status, pageSize, final_url: finalUrl, language };
     } catch (error) {
+        console.log(`❌ [Worker ${process.pid}] Fetch error for ${domain}: ${error.message}`);
         return {
             domain,
             list_number,
