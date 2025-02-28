@@ -55,7 +55,7 @@ async function sendToBubble(fileType, filePath) {
 // ✅ Configure file upload (CSV only)
 const upload = multer({
     dest: "uploads/",
-    limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+    limits: { fileSize: 20 * 1024 * 1024 }, // 5MB
     fileFilter: (req, file, cb) => {
         file.mimetype === "text/csv" ? cb(null, true) : cb(new Error("Only CSV files are allowed"), false);
     }
