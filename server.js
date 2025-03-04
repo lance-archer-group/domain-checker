@@ -22,8 +22,7 @@ const resultsDir = "results";
 if (!fs.existsSync(resultsDir)) {
     fs.mkdirSync(resultsDir);
 }
-// At the top-level (e.g., in your main server file)
-const { MongoClient } = require("mongodb");
+
 
 const mongoClient = new MongoClient(process.env.MONGODB_URI, {
   // Configure pool size as needed. The default is 100.
