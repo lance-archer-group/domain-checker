@@ -22,7 +22,26 @@ const resultsDir = "results";
 if (!fs.existsSync(resultsDir)) {
     fs.mkdirSync(resultsDir);
 }
+// At the top-level (e.g., in your main server file)
+const { MongoClient } = require("mongodb");
 
+const mongoClient = new MongoClient(process.env.MONGODB_URI, {
+  // Configure pool size as needed. The default is 100.
+  maxPoolSize: 10,
+});
+
+async function initializeMongoClient() {
+  try {
+    await mongoClient.connect();
+    console.log("✅ MongoDB connected and connection pool initialized");
+  } catch (error) {
+    console.error("❌ MongoDB connection error:", error);
+    process.exit(1);
+  }
+}
+
+// Call this before starting your server
+initializeMongoClient();
 // ✅ Get public IP address
 const getPublicIP = async () => {
     try {
@@ -106,10 +125,9 @@ const ALLOWED_LANGUAGES = ["en", "en-us"];
  * @param {Array} badResults - Array of bad result objects.
  */
 async function uploadToMongoDB(goodResults, badResults) {
-    const client = new MongoClient(process.env.MONGODB_URI);
     try {
-        await client.connect();
-        const db = client.db("Archer_Group");
+        // Use the global mongoClient instead of creating a new one.
+        const db = mongoClient.db("Archer_Group");
 
         if (goodResults.length > 0) {
             const validDomainsCollection = db.collection("valid_domains");
@@ -130,6 +148,7 @@ async function uploadToMongoDB(goodResults, badResults) {
             const result = await validDomainsCollection.bulkWrite(bulkOps);
             console.log(`✅ Upserted ${result.upsertedCount} good domains to MongoDB, matched ${result.matchedCount}`);
         }
+
         if (badResults.length > 0) {
             const failedDomainsCollection = db.collection("failed_domains");
             const bulkOps = badResults.map(doc => ({
@@ -151,9 +170,8 @@ async function uploadToMongoDB(goodResults, badResults) {
         }
     } catch (err) {
         console.error("❌ Error uploading to MongoDB:", err);
-    } finally {
-        await client.close();
     }
+    // No need to close the connection here since it is managed globally.
 }
 
 // ✅ Function to process CSV
