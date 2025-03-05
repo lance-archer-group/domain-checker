@@ -83,7 +83,17 @@ async function uploadToMongoDB(goodResults, badResults) {
 // Import and initialize the poller.
 const initPoller = require("./poller");
 initPoller({ mongoClient, pool, ALLOWED_LANGUAGES, uploadToMongoDB });
-
+// Endpoint to return the count of documents in the to_be_scanned collection.
+app.get("/count/to_be_scanned", async (req, res) => {
+    try {
+      const db = mongoClient.db("Archer_Group");
+      const count = await db.collection("to_be_scanned").countDocuments();
+      res.json({ count });
+    } catch (error) {
+      console.error("Error fetching count:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
 // Start the server.
 app.listen(PORT, async () => {
   const publicIP = await (async () => {

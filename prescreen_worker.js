@@ -47,7 +47,8 @@ const HTML_SCRAPE_TERMS = {
         "namecheap marketplace",
         "domain is parked",
         "parking",
-        "hosting"
+        "hosting",
+        "lorem ipsum"
     ],
     regex: [
         /this\s+domain\s+is\s+(currently\s+)?for\s+sale/i,
@@ -57,6 +58,7 @@ const HTML_SCRAPE_TERMS = {
         /sedoparking/i,
         /afternic/i,
         /click\s+here\s+to\s+buy/i
+        /lorem\s+ipsum/i
     ]
 };
 
