@@ -84,7 +84,7 @@ async function uploadToMongoDB(goodResults, badResults) {
 const initPoller = require("./poller");
 initPoller({ mongoClient, pool, ALLOWED_LANGUAGES, uploadToMongoDB });
 // Endpoint to return the count of documents in the to_be_scanned collection.
-app.get("/count/to_be_scanned", async (req, res) => {
+app.get("/to_be_scanned", async (req, res) => {
     try {
       const db = mongoClient.db("Archer_Group");
       const count = await db.collection("to_be_scanned").countDocuments();
