@@ -57,7 +57,7 @@ const HTML_SCRAPE_TERMS = {
         /domain\s+parking/i,
         /sedoparking/i,
         /afternic/i,
-        /click\s+here\s+to\s+buy/i
+        /click\s+here\s+to\s+buy/i,
         /lorem\s+ipsum/i
     ]
 };
