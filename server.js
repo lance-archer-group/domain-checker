@@ -38,7 +38,51 @@ initializeMongoClient();
 
 // Define ALLOWED_LANGUAGES.
 const ALLOWED_LANGUAGES = ["en", "en-us"];
+async function recordListNumberStats(aggregatedCounts) {
+  const db = mongoClient.db("Archer_Group");
+  const statsCollection = db.collection("domain_scan_events"); // time-series or regular
 
+  const now = new Date();
+  const docs = Object.entries(aggregatedCounts).map(([listNumber, counts]) => ({
+    list_number: listNumber,
+    good_count: counts.good,
+    bad_count: counts.bad,
+    createdAt: now
+  }));
+
+  if (docs.length > 0) {
+    await statsCollection.insertMany(docs);
+    console.log(`Inserted ${docs.length} stats documents for list_numbers.`);
+  }
+}
+function aggregateCountsByListNumber(goodResults, badResults) {
+  const resultMap = {};
+
+  // Count "good"
+  for (const doc of goodResults) {
+    const ln = doc.list_number;
+    if (!resultMap[ln]) {
+      resultMap[ln] = { good: 0, bad: 0 };
+    }
+    resultMap[ln].good++;
+  }
+
+  // Count "bad"
+  for (const doc of badResults) {
+    const ln = doc.list_number;
+    if (!resultMap[ln]) {
+      resultMap[ln] = resultMap[ln] || { good: 0, bad: 0 };
+    }
+    resultMap[ln].bad++;
+  }
+
+  return resultMap; 
+  // Example shape: 
+  // {
+  //   "LIST123": { good: 2, bad: 1 },
+  //   "LIST999": { good: 5, bad: 3 }
+  // }
+}
 // Function to upload results to MongoDB.
 async function uploadToMongoDB(goodResults, badResults) {
   try {
@@ -76,6 +120,9 @@ async function uploadToMongoDB(goodResults, badResults) {
   } catch (err) {
     console.error("❌ Error uploading to MongoDB:", err);
   }
+
+  const aggregatedCounts = aggregateCountsByListNumber(goodResults, badResults);
+  await recordListNumberStats(aggregatedCounts);
 }
 
 // (Other parts of your server.js, such as CSV processing, file upload endpoints, etc.)
