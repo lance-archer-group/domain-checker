@@ -15,7 +15,7 @@ const { MongoClient } = require("mongodb");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const pool = workerpool.pool(path.join(__dirname, "prescreen_worker.js"), { maxWorkers: os.cpus().length });
+const pool = workerpool.pool(path.join(__dirname, "prescreen_worker.js"), { maxWorkers: os.cpus().length * 2});
 const BUBBLE_API_URL = "https://d132.bubble.is/site/dataorchard/version-test/api/1.1/wf/webhookfile";
 
 // Ensure "results" folder exists on startup.
