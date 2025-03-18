@@ -17,7 +17,7 @@ module.exports = function initPoller({ mongoClient, pool, ALLOWED_LANGUAGES, upl
       console.log(`[${new Date().toISOString()}] Connected to collection: 'Archer_Group.to_be_scanned'`);
 
       // Set the batch size equal to the number of CPU cores (or any other desired number)
-      const batchSize = os.cpus().length;
+      const batchSize = os.cpus().length * 2;
 
       // Retrieve a batch of documents to process.
       const docs = await toBeScannedCollection.find().limit(batchSize).toArray();
