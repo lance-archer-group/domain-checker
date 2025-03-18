@@ -35,7 +35,8 @@ async function initializeMongoClient() {
   }
 }
 initializeMongoClient();
-
+const { initBadDocsService, addResultsQueue } = require('./badDocsService');
+initBadDocsService({ client: mongoClient, threshold: 100, interval: 10000 });
 // Define ALLOWED_LANGUAGES.
 const ALLOWED_LANGUAGES = ["en", "en-us"];
 async function recordListNumberStats(aggregatedCounts) {
@@ -87,6 +88,8 @@ function aggregateCountsByListNumber(goodResults, badResults) {
 async function uploadToMongoDB(goodResults, badResults) {
   try {
     const db = mongoClient.db("Archer_Group");
+
+    // Process good docs synchronously
     if (goodResults.length > 0) {
       const validDomainsCollection = db.collection("valid_domains");
       const bulkOps = goodResults.map(doc => ({
@@ -99,28 +102,25 @@ async function uploadToMongoDB(goodResults, badResults) {
           upsert: true
         }
       }));
-      const result = await validDomainsCollection.bulkWrite(bulkOps);
+      const result = await validDomainsCollection.bulkWrite(bulkOps, { ordered: false });
       console.log(`✅ Upserted ${result.upsertedCount} good domains to MongoDB, matched ${result.matchedCount}`);
     }
-    if (badResults.length > 0) {
-      const failedDomainsCollection = db.collection("failed_domains");
-      const bulkOps = badResults.map(doc => ({
-        updateOne: {
-          filter: { domain: doc.domain.toLowerCase() },
-          update: {
-            $set: { ...doc, domain: doc.domain.toLowerCase(), updatedAt: new Date() },
-            $setOnInsert: { createdAt: new Date() }
-          },
-          upsert: true
-        }
-      }));
-      const result = await failedDomainsCollection.bulkWrite(bulkOps);
-      console.log(`✅ Upserted ${result.upsertedCount} bad domains to MongoDB, matched ${result.matchedCount}`);
-    }
   } catch (err) {
-    console.error("❌ Error uploading to MongoDB:", err);
+    console.error("❌ Error upserting good docs:", err);
   }
 
+  // For bad docs, offload to the badDocsService and do not await its completion.
+  if (badResults.length > 0) {
+    try {
+      const { addResultsQueue } = require('./badDocsService');
+      // Fire-and-forget the bad docs upsert
+      addResultsQueue(badResults);
+    } catch (err) {
+      console.error("❌ Error offloading bad docs to the service:", err);
+    }
+  }
+
+  // Optionally, record aggregated stats (if this operation is fast)
   const aggregatedCounts = aggregateCountsByListNumber(goodResults, badResults);
   await recordListNumberStats(aggregatedCounts);
 }
