@@ -63,18 +63,19 @@ module.exports = function initPoller({ mongoClient, pool, ALLOWED_LANGUAGES, upl
           } else {
             badResults.push(data);
           }
-        } else {
-          badResults.push({
-            domain: "unknown",
-            list_number: "unknown",
-            status: "error",
-            error_reason: "Worker thread failed",
-            pageSize: 0,
-            final_url: "N/A",
-            language: "N/A"
-          });
-        }
-      });
+       } else { // result.status === 'rejected'
+    // Log the actual error
+    console.error(`[${new Date().toISOString()}] Worker task failed for a domain:`, result.reason);
+    badResults.push({
+        domain: "unknown",
+        list_number: "unknown",
+        status: "error",
+        error_reason: `Worker thread failed: ${result.reason.message || 'Unknown error'}`,
+        pageSize: 0,
+        final_url: "N/A",
+        language: "N/A"
+    });
+}
 
       // Upload the processed results to MongoDB collections.
       await uploadToMongoDB(goodResults, badResults);

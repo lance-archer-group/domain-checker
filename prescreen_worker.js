@@ -25,6 +25,16 @@ const FILTERED_TERMS_GROUPED = {
 // Flatten the grouped terms into one array for filtering.
 const FILTERED_TERMS = Object.values(FILTERED_TERMS_GROUPED).flat();
 
+// Create a single, more precise regex for filtering.
+// This escapes special characters and uses word boundaries (\b) to prevent partial matches.
+const BLOCKED_TERMS_REGEX = new RegExp(FILTERED_TERMS.map(term => {
+    // Escape special regex characters from the term
+    const escapedTerm = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // For terms starting with a dot (like TLDs), we don't want a preceding word boundary.
+    return (escapedTerm.startsWith('\\.') ? escapedTerm : `\\b${escapedTerm}\\b`);
+}).join('|'), 'i');
+
+
 // Only allow these language codes from the Content-Language header.
 const ALLOWED_LANGUAGES = ["en", "en-us"];
 
@@ -64,7 +74,7 @@ const HTML_SCRAPE_TERMS = {
 
 /**
  * Check if the given domain resolves via DNS.
- * @param {string} domain 
+ * @param {string} domain
  * @returns {Promise<boolean>}
  */
 async function checkDNS(domain) {
@@ -151,8 +161,9 @@ async function checkWebsite(domainData) {
             };
         }
 
-        // Filter out URLs with blocked terms or specific subdomain patterns.
-        if (FILTERED_TERMS.some(term => finalUrl.includes(term)) || WW_SUBDOMAIN_REGEX.test(finalUrl)) {
+        // **UPDATED LOGIC**
+        // Filter out URLs using the more precise regex for blocked terms or the ww## subdomain pattern.
+        if (BLOCKED_TERMS_REGEX.test(finalUrl) || WW_SUBDOMAIN_REGEX.test(finalUrl)) {
             return {
                 domain,
                 list_number: listNumber,
@@ -214,7 +225,6 @@ async function checkWebsite(domainData) {
             };
         }
 
-        // Check for HTML content patterns indicating a parking page.
         // Check for HTML content patterns indicating a parking page.
         let detectedTerm = null;
 
